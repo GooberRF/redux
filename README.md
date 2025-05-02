@@ -1,2 +1,2 @@
-# RFGroupToolkit
-A small Red Faction geometry workflow tool
+# REDUX - The RED User eXperience Kit
+
