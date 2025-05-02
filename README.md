@@ -1,2 +1,2 @@
-# REDUX - The RED User eXperience Kit
+# REDUX - The RED User eXperience Toolkit
 
