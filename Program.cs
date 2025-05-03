@@ -5,8 +5,16 @@ namespace RFGConverter
 {
 	class Program
 	{
+		private const string Version = "0.0.1";
 		static void Main(string[] args)
 		{
+			if (args.Length == 1 && (args[0] == "-ver" || args[0] == "--version" || args[0] == "-v" || args[0] == "-help" || args[0] == "-h"))
+			{
+				Console.WriteLine($"RED UX Toolkit by Goober - Version {Version}");
+				Console.WriteLine("Usage: redux.exe -input <file> -output <file>");
+				return;
+			}
+
 			string inputFile = null;
 			string outputFile = null;
 
