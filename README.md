@@ -13,6 +13,8 @@ Arguments:
 ------
 - `-input`     Path to the input file
 - `-output`    Path to the output file
+- `-ver`       Print version information
+- `-help`      Print usage information
 
 Notes:  
 ------
