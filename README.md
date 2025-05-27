@@ -21,8 +21,7 @@ Arguments:
 - `-loglevel <level>`  
               Set verbosity level (`debug`, `info`, `warn`, `error`) or (0–3). Defaults to `info`.
 
-Only available during RFL → OBJ conversion:
-------
+Additional arguments available during RFL → OBJ conversion:
 - `-portalfaces <bool>`      Include portal faces. Default: false
 - `-detailfaces <bool>`      Include faces from detail brushes. Default: true
 - `-alphafaces <bool>`       Include faces with alpha textures. Default: true
