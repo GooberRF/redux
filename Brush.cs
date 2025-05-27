@@ -13,6 +13,7 @@ namespace RFGConverter
 		public List<int> Indices { get; set; } = new List<int>();
 		public string TextureName { get; set; }
 		public Solid Solid { get; set; }
+		public List<PropPoint> PropPoints { get; set; } = new List<PropPoint>();
 	}
 
 	public class Solid
@@ -27,5 +28,22 @@ namespace RFGConverter
 	{
 		public List<int> Vertices { get; set; } = new List<int>();
 		public int TextureIndex { get; set; }
+		public ushort FaceFlags { get; set; }
+		public bool HasHoles => (FaceFlags & 0x80) != 0;
+		public bool HasAlpha => (FaceFlags & 0x40) != 0;
+		public bool FullBright => (FaceFlags & 0x20) != 0;
+		public bool ScrollTexture => (FaceFlags & 0x10) != 0;
+		public bool IsDetail => (FaceFlags & 0x08) != 0;
+		public bool LiquidSurface => (FaceFlags & 0x04) != 0;
+		public bool Mirrored => (FaceFlags & 0x02) != 0;
+		public bool ShowSky => (FaceFlags & 0x01) != 0;
+		public bool IsInvisible => (FaceFlags & 0x2000) != 0;
+
+	}
+	public class PropPoint
+	{
+		public string Name { get; set; }
+		public Vector3 Position { get; set; }
+		public Quaternion Rotation { get; set; }
 	}
 }

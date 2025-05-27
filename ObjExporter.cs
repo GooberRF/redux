@@ -8,12 +8,16 @@ namespace RFGConverter
 {
 	public static class ObjExporter
 	{
+		private const string logSrc = "ObjExporter";
 		public static void ExportObj(Mesh mesh, string objPath)
 		{
 			string objDir = Path.GetDirectoryName(objPath)!;
 			string objName = Path.GetFileNameWithoutExtension(objPath);
 			string mtlFileName = objName + ".mtl";
 			string mtlPath = Path.Combine(objDir, mtlFileName);
+
+			Logger.Info(logSrc, $"Writing OBJ to {objPath}");
+			Logger.Info(logSrc, $"Writing MTL to {mtlPath}");
 
 			using StreamWriter objWriter = new StreamWriter(objPath);
 			using StreamWriter mtlWriter = new StreamWriter(mtlPath);
@@ -25,8 +29,11 @@ namespace RFGConverter
 
 			foreach (var brush in mesh.Brushes)
 			{
-				if (brush.Vertices.Count == 0 || brush.Indices.Count == 0)
+				if (brush.Vertices.Count == 0)
+				{
+					Logger.Debug(logSrc, "Skipping brush with no vertices.");
 					continue;
+				}
 
 				bool isAir = (brush.Solid.Flags & 0x02) != 0;
 				bool isDetail = (brush.Solid.Flags & 0x04) != 0;
@@ -39,6 +46,8 @@ namespace RFGConverter
 				string steamStr = emitsSteam ? "emit" : "noemit";
 
 				string brushName = $"Brush_{brush.UID}_{typeStr}_{detailStr}_{portalStr}_{steamStr}";
+				Logger.Debug(logSrc, $"Exporting brush: {brushName}");
+
 				objWriter.WriteLine($"o {brushName}");
 
 				List<Vector3> transformedVerts = new();
@@ -71,6 +80,7 @@ namespace RFGConverter
 					// Write .mtl entry
 					if (writtenMaterials.Add(materialName))
 					{
+						Logger.Debug(logSrc, $"Writing material: {materialName}");
 						mtlWriter.WriteLine($"newmtl {materialName}");
 						mtlWriter.WriteLine("Ka 1.000 1.000 1.000");
 						mtlWriter.WriteLine("Kd 1.000 1.000 1.000");
@@ -97,8 +107,17 @@ namespace RFGConverter
 					}
 				}
 
+				// prop points are used by v3m/v3c
+				foreach (var prop in brush.PropPoints)
+				{
+					var pos = prop.Position + brush.Position; // offset to world pos
+					objWriter.WriteLine(string.Format(CultureInfo.InvariantCulture, "# prop {0} at {1} {2} {3}", prop.Name, -pos.X, pos.Y, pos.Z));
+				}
+
 				globalVertexOffset += transformedVerts.Count;
 			}
+
+			Logger.Info(logSrc, "OBJ export complete.");
 		}
 	}
 }

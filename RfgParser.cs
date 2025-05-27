@@ -109,7 +109,7 @@ namespace RFGConverter
 			return mesh;
 		}
 
-		private static Brush ReadBrush(BinaryReader reader)
+		public static Brush ReadBrush(BinaryReader reader)
 		{
 			var brush = new Brush();
 
