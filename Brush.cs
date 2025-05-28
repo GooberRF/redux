@@ -22,6 +22,8 @@ namespace RFGConverter
 		public List<Vector3> Vertices { get; set; } = new List<Vector3>();
 		public List<Face> Faces { get; set; } = new List<Face>();
 		public uint Flags { get; set; }
+		public int Life { get; set; }
+		public int State { get; set; }
 	}
 
 	public class Face

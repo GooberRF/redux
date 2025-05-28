@@ -33,7 +33,7 @@ Additional arguments available during RFL → OBJ conversion:
 Notes:  
 ------
 - Converts Red Faction map/mesh data between supported formats.
-- Current version supports `.rfg` to `.obj` for brushes and `.rfl` (RF1 and RF2) to `.obj` for level static geometry.
+- Current version supports `.rfg` or `.rfl` (RF1 and RF2) as input, and `.obj` or `.rfg` as output.
 - Useful for importing/exporting RF content in Blender or other tools.
 - Built to streamline asset prep and migration across RF and modern pipelines.
-- Thanks to [natarii](https://github.com/natarii), [rafalh](https://github.com/rafalh/rf-reversed), and [Marisa-Chan](https://github.com/Marisa-Chan/RF2_rfl_rfc) for the format research on which this tool relies.
+- Thanks to [rafalh](https://github.com/rafalh/rf-reversed), [wardd64](https://github.com/wardd64/UnityFaction), [natarii](https://github.com/natarii), and [Marisa-Chan](https://github.com/Marisa-Chan/RF2_rfl_rfc) for format research.

@@ -1,11 +1,12 @@
-﻿using System;
+﻿using redux;
+using System;
 using System.IO;
 
 namespace RFGConverter
 {
 	class Program
 	{
-		private const string Version = "0.2.0";
+		private const string Version = "0.2.1";
 		private const string logSrc = "REDUX";
 		static void Main(string[] args)
 		{
@@ -65,6 +66,14 @@ namespace RFGConverter
 					};
 					i++;
 				}
+				else if (args[i].Equals("-brushes", StringComparison.OrdinalIgnoreCase))
+				{
+					Config.ParseBrushSectionInstead = true;
+				}
+				else if (args[i].Equals("-triangulate", StringComparison.OrdinalIgnoreCase))
+				{
+					Config.TriangulatePolygons = true;
+				}
 				else if (i + 1 < args.Length)
 				{
 					string val = args[i + 1].ToLowerInvariant();
@@ -104,11 +113,23 @@ namespace RFGConverter
 				var mesh = RfgParser.ReadRfg(inputFile);
 				ObjExporter.ExportObj(mesh, outputFile);
 			}
+			else if (inputFile.EndsWith(".rfg", StringComparison.OrdinalIgnoreCase) && outputFile.EndsWith(".rfg", StringComparison.OrdinalIgnoreCase))
+			{
+				Logger.Info(logSrc, $"Converting RFG -> RFG: {inputFile} -> {outputFile}");
+				var mesh = RfgParser.ReadRfg(inputFile);
+				RfgExporter.ExportRfg(mesh, outputFile);
+			}
 			else if (inputFile.EndsWith(".rfl", StringComparison.OrdinalIgnoreCase) && outputFile.EndsWith(".obj", StringComparison.OrdinalIgnoreCase))
 			{
 				Logger.Info(logSrc, $"Converting RFL -> OBJ: {inputFile} -> {outputFile}");
 				var mesh = RflParser.ReadRfl(inputFile);
 				ObjExporter.ExportObj(mesh, outputFile);
+			}
+			else if (inputFile.EndsWith(".rfl", StringComparison.OrdinalIgnoreCase) && outputFile.EndsWith(".rfg", StringComparison.OrdinalIgnoreCase))
+			{
+				Logger.Info(logSrc, $"Converting RFL -> RFG: {inputFile} -> {outputFile}");
+				var mesh = RflParser.ReadRfl(inputFile);
+				RfgExporter.ExportRfg(mesh, outputFile);
 			}
 			else
 			{
