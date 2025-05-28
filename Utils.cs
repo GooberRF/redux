@@ -1,5 +1,6 @@
 ﻿using System.IO;
 using System.Numerics;
+using System.Reflection;
 using System.Text;
 
 namespace RFGConverter
@@ -14,7 +15,9 @@ namespace RFGConverter
 		public static bool IncludeSkyFaces { get; set; } = false;
 		public static bool IncludeInvisibleFaces { get; set; } = false;
 		public static bool ParseBrushSectionInstead { get; set; } = false;
-		public static bool TriangulatePolygons { get; set; } = false;
+		public static bool TriangulatePolygons { get; set; } = true;
+		public static bool TranslateRF2Textures { get; set; } = false;
+		public static bool SetRF2GeoableNonDetail { get; set; } = false;
 		public enum LogLevel
 		{
 			Debug,
@@ -126,6 +129,45 @@ namespace RFGConverter
 		public Vector3 Point2 { get; set; }
 	}
 
+	public static class ObjUtils
+	{
+		public static int ParseUidFromObjectName(string objectName, int fallback)
+		{
+			var parts = objectName.Split('_', StringSplitOptions.RemoveEmptyEntries);
+			if (parts.Length >= 2 && parts[0].Equals("Brush", StringComparison.OrdinalIgnoreCase))
+			{
+				if (int.TryParse(parts[1], out int uid))
+					return uid;
+			}
+
+			//Logger.Warn(logSrc, $"Could not parse UID from object name '{objectName}', using fallback UID {fallback}");
+			return fallback;
+		}
+
+		public static uint ParseFlagsFromObjectName(string objectName)
+		{
+			uint flags = 0;
+			var parts = objectName.Split('_', StringSplitOptions.RemoveEmptyEntries);
+
+			foreach (string part in parts)
+			{
+				switch (part.ToLowerInvariant())
+				{
+					case "air": flags |= 0x02; break;
+					case "solid": break;
+					case "detail": flags |= 0x04; break;
+					case "nodetail": break;
+					case "portal": flags |= 0x01; break;
+					case "noportal": break;
+					case "emit": flags |= 0x10; break;
+					case "noemit": break;
+				}
+			}
+
+			return flags;
+		}
+	}
+
 	public static class RflUtils
 	{
 		public readonly struct VertexKey : IEquatable<VertexKey>
@@ -187,6 +229,147 @@ namespace RFGConverter
 				reader.BaseStream.Seek(0, SeekOrigin.End);
 			else
 				reader.BaseStream.Seek(bytesToSkip, SeekOrigin.Current);
+		}
+	}
+
+	public static class SolidFlagUtils
+	{
+		public static SolidFlags MakeRF1SafeFlags(SolidFlags flags)
+		{
+			const SolidFlags allowed =
+				SolidFlags.Portal |
+				SolidFlags.Air |
+				SolidFlags.Detail |
+				SolidFlags.EmitsSteam;
+
+			return flags & allowed;
+		}
+
+		public static SolidFlags StripRF2Geoable(SolidFlags flags)
+		{
+			bool isAir = (flags & SolidFlags.Air) != 0;
+			bool isPortal = (flags & SolidFlags.Portal) != 0;
+			bool isDetail = (flags & SolidFlags.Detail) != 0;
+			bool isGeoable = (flags & SolidFlags.Geoable) != 0;
+
+			if (!isAir && !isPortal && isDetail && isGeoable)
+			{
+				flags &= ~SolidFlags.Detail;
+				flags &= ~SolidFlags.Geoable;
+			}
+
+			return flags;
+		}
+	}
+
+	public static class EmbeddedResourceLoader
+	{
+		public static string[] LoadLines(string resourceName)
+		{
+			var assembly = Assembly.GetExecutingAssembly();
+			string fullName = assembly.GetManifestResourceNames()
+				.FirstOrDefault(n => n.EndsWith(resourceName, StringComparison.OrdinalIgnoreCase));
+
+			if (fullName == null)
+				throw new FileNotFoundException($"Embedded resource '{resourceName}' not found.");
+
+			using var stream = assembly.GetManifestResourceStream(fullName);
+			using var reader = new StreamReader(stream!);
+			var lines = new List<string>();
+
+			while (!reader.EndOfStream)
+				lines.Add(reader.ReadLine()!);
+
+			return lines.ToArray();
+		}
+	}
+
+	public static class RF2TextureTranslator
+	{
+		private static Dictionary<string, string>? _translationMap;
+
+		public static int TranslationCount => _translationMap?.Count ?? 0;
+
+		public static void LoadRF2TextureTranslations()
+		{
+			var realTextures = EmbeddedResourceLoader.LoadLines("real_texture_filenames.txt").ToList();
+			var translatedTextures = new HashSet<string>(
+				EmbeddedResourceLoader.LoadLines("translated_texture_filenames.txt"),
+				StringComparer.OrdinalIgnoreCase
+			);
+
+			string[] materialPrefixes = new[]
+			{
+				"rck_", "mtl_", "wtr_", "pls_", "gls_", "drt_", "woo_", "tec_", "cpt_", "mar_", "sp0_"
+			};
+
+			_translationMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+			foreach (var real in realTextures)
+			{
+				string baseName = real;
+
+				// Remove known material prefix
+				foreach (var prefix in materialPrefixes)
+				{
+					if (real.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+					{
+						baseName = real.Substring(prefix.Length);
+						break;
+					}
+				}
+
+				// Find a translated texture that ends with the base name
+				string? match = translatedTextures.FirstOrDefault(t =>
+					t.EndsWith(baseName, StringComparison.OrdinalIgnoreCase));
+
+				if (match != null)
+					_translationMap[real] = match;
+			}
+
+			// Hardcoded translations
+			AddManualTranslation("cpt_invisible.tga", "rck_invisible04.tga");
+			AddManualTranslation("drt_invisible.tga", "rck_invisible04.tga");
+			AddManualTranslation("mar_invisible.tga", "sld_invisible01.tga");
+			AddManualTranslation("mtl_invisible.tga", "mtl_invisible02.tga");
+			AddManualTranslation("pls_invisible.tga", "sld_invisible01.tga");
+			AddManualTranslation("rck_invisible.tga", "rck_invisible04.tga");
+			AddManualTranslation("woo_invisible.tga", "sld_invisible01.tga");
+			AddManualTranslation("wtr_invisible.tga", "cem_invisible03.tga");
+			AddManualTranslation("mtl_jpad_oct1.tga", "mtl_L15S2_lift.tga");
+			AddManualTranslation("mtl_jpad_oct2.tga", "mtl_jumppad01.tga");
+			AddManualTranslation("mtl_jpad_oct4.tga", "mtl_jumppad02.tga");
+		}
+
+		public static void AddManualTranslation(string original, string translated)
+		{
+			if (_translationMap == null)
+				_translationMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+			_translationMap[original] = translated;
+		}
+
+		public static string TranslateRF2Texture(string textureFilename)
+		{
+			if (_translationMap == null)
+				throw new InvalidOperationException("Translation map not loaded. Call LoadRF2TextureTranslations() first.");
+
+			if (_translationMap.TryGetValue(textureFilename, out var translated))
+				return translated;
+
+			return textureFilename; // No translation found
+		}
+
+		public static void DebugPrintAllTranslations()
+		{
+			if (_translationMap == null)
+			{
+				Console.WriteLine("Translation map not loaded.");
+				return;
+			}
+
+			foreach (var pair in _translationMap)
+				Console.WriteLine($"{pair.Key} -> {pair.Value}");
 		}
 	}
 }

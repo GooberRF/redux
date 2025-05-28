@@ -19,6 +19,11 @@ namespace RFGConverter
 			Logger.Info(logSrc, $"Writing OBJ to {objPath}");
 			Logger.Info(logSrc, $"Writing MTL to {mtlPath}");
 
+			if (!Config.TriangulatePolygons)
+			{
+				Logger.Info(logSrc, $"-ngons option used, not forcing triangulation of exported polygons");
+			}
+
 			using StreamWriter objWriter = new StreamWriter(objPath);
 			using StreamWriter mtlWriter = new StreamWriter(mtlPath);
 
@@ -95,6 +100,41 @@ namespace RFGConverter
 
 					foreach (var face in kvp.Value)
 					{
+						if (face.Vertices.Count < 3)
+							continue;
+
+						if (!Config.TriangulatePolygons)
+						{
+							if (face.Vertices.Count > 3)
+							{
+								Logger.Debug(logSrc, $"Exporting ngon face with {face.Vertices.Count} vertices.");
+							}
+							// Write full polygon face
+							var faceLine = "f";
+							foreach (int vertIdx in face.Vertices)
+							{
+								int v = vertIdx + globalVertexOffset;
+								faceLine += $" {v}/{v}";
+							}
+							objWriter.WriteLine(faceLine);
+						}
+						else
+						{
+							// Triangulate using fan method
+							for (int i = 1; i < face.Vertices.Count - 1; i++)
+							{
+								int i0 = face.Vertices[0] + globalVertexOffset;
+								int i1 = face.Vertices[i] + globalVertexOffset;
+								int i2 = face.Vertices[i + 1] + globalVertexOffset;
+								objWriter.WriteLine($"f {i0}/{i0} {i2}/{i2} {i1}/{i1}");
+							}
+						}
+					}
+
+
+					/*
+					foreach (var face in kvp.Value)
+					{
 						if (face.Vertices.Count < 3) continue;
 
 						for (int i = 1; i < face.Vertices.Count - 1; i++)
@@ -104,7 +144,7 @@ namespace RFGConverter
 							int i2 = face.Vertices[i + 1] + globalVertexOffset;
 							objWriter.WriteLine($"f {i0}/{i0} {i2}/{i2} {i1}/{i1}");
 						}
-					}
+					}*/
 				}
 
 				// prop points are used by v3m/v3c

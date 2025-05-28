@@ -7,4 +7,14 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <None Remove="res\real_texture_filenames.txt" />
+    <None Remove="res\translated_texture_filenames.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="res\real_texture_filenames.txt" />
+    <EmbeddedResource Include="res\translated_texture_filenames.txt" />
+  </ItemGroup>
+
 </Project>

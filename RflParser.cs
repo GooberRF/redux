@@ -46,6 +46,11 @@ namespace RFGConverter
 			if (isRF2)
 			{
 				Logger.Info(logSrc, $"Red Faction 2 RFL detected, using RF2 parsing");
+				if (Config.TranslateRF2Textures)
+				{
+					RF2TextureTranslator.LoadRF2TextureTranslations();
+					Logger.Info(logSrc, $"Loaded {RF2TextureTranslator.TranslationCount} RF2 texture filename translation definitions");
+				}
 			}
 			else if (isAlpine)
 			{
@@ -59,6 +64,11 @@ namespace RFGConverter
 			if (Config.ParseBrushSectionInstead)
 			{
 				Logger.Info(logSrc, $"-brushes option used, parsing brush data instead of static geometry");
+			}
+
+			if (!Config.TriangulatePolygons)
+			{
+				Logger.Info(logSrc, $"-ngons option used, not forcing triangulation of parsed polygons");
 			}
 
 			// Read sections
@@ -626,6 +636,15 @@ namespace RFGConverter
 			brush.Solid = new Solid();
 			var solid = brush.Solid;
 
+			static (Vector3, Vector2) QuantizedKey(Vector3 pos, Vector2 uv, float precision = 0.0001f)
+			{
+				int Q(float f) => (int)(f / precision);
+				return (
+					new Vector3(Q(pos.X), Q(pos.Y), Q(pos.Z)),
+					new Vector2(Q(uv.X), Q(uv.Y))
+				);
+			}
+
 			try
 			{
 				// UID
@@ -678,8 +697,18 @@ namespace RFGConverter
 				for (int i = 0; i < numTextures; i++)
 				{
 					string tex = Utils.ReadVString(reader);
-					Logger.Debug(logSrc, $"Texture {i}: \"{tex}\"");
-					solid.Textures.Add(tex);
+
+					if (Config.TranslateRF2Textures)
+					{
+						string translatedTex = RF2TextureTranslator.TranslateRF2Texture(tex);
+						Logger.Debug(logSrc, $"Texture {i}: \"{tex}\" → \"{translatedTex}\"");
+						solid.Textures.Add(translatedTex);
+					}
+					else
+					{
+						Logger.Debug(logSrc, $"Texture {i}: \"{tex}\"");
+						solid.Textures.Add(tex);
+					}
 				}
 
 				// Read room data
@@ -743,101 +772,72 @@ namespace RFGConverter
 
 				// Vertices
 				int numVertices = reader.ReadInt32();
-				Logger.Debug(logSrc, $"numVertices: {numVertices}");
-				var rawVerts = new List<Vector3>();
+				var rawVerts = new List<Vector3>(numVertices);
 				for (int i = 0; i < numVertices; i++)
-				{
-					float x = reader.ReadSingle();
-					float y = reader.ReadSingle();
-					float z = reader.ReadSingle();
-					rawVerts.Add(new Vector3(x, y, z));
-				}
+					rawVerts.Add(new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()));
 
 				int numFaces = reader.ReadInt32();
-				Logger.Debug(logSrc, $"numFaces: {numFaces}");
-
 				List<Vector3> finalVerts = new();
 				List<Vector2> finalUVs = new();
 				List<int> indices = new();
+				var vertexLookup = new Dictionary<(Vector3, Vector2), int>();
 
 				for (int i = 0; i < numFaces; i++)
 				{
-					long start = reader.BaseStream.Position;
-					Logger.Debug(logSrc, $"Reading face {i} at 0x{start:X}");
-
-					Vector3 normal = new(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
-					float dist = reader.ReadSingle();
-
-					int textureIndex = reader.ReadInt32(); // TexID
-					reader.ReadUInt32(); // skip A
-					reader.ReadUInt32(); // skip B
-					reader.ReadUInt32(); // skip C
-
+					reader.BaseStream.Seek(16, SeekOrigin.Current); // skip normal + dist
+					int textureIndex = reader.ReadInt32();
+					reader.BaseStream.Seek(12, SeekOrigin.Current); // skip A, B, C
 					uint faceFlags = reader.ReadUInt32();
-					reader.ReadUInt32(); // skip smoothing groups
+					reader.ReadUInt32(); // smoothing
 
-					uint roomIndex;
-					uint vertCount;
-
-					// If flag 0x8000 set (not sure what it means), we need to read additional data here and set some additional flags
 					if ((faceFlags & 0x8000) != 0)
 					{
-						reader.ReadSingle(); // skip a float
+						reader.ReadSingle(); // unknown
 						float tmp = reader.ReadSingle();
-						if (Math.Abs(tmp - 1.0f) < 0.001f)
-							faceFlags |= 0x100000;
-						else if (Math.Abs(tmp - 1.35f) < 0.001f)
-							faceFlags |= 0x200000;
-						else if (Math.Abs(tmp - 1.5f) < 0.001f)
-							faceFlags |= 0x400000;
-						else
-							faceFlags |= 0x800000;
+						faceFlags |= tmp switch
+						{
+							1.0f => 0x100000,
+							1.35f => 0x200000,
+							1.5f => 0x400000,
+							_ => 0x800000
+						};
 					}
 
-					// Pre-295 rfls only checked these sometimes, but we're always 295
-					reader.ReadByte();
-					reader.ReadByte();
-					reader.ReadByte();
-
-					float extraFloat = reader.ReadSingle(); // affects 0x4000000 - again, not sure what it means
-					if (Math.Abs(extraFloat) > 0.0001f)
+					reader.BaseStream.Seek(3, SeekOrigin.Current);
+					float extra = reader.ReadSingle();
+					if (Math.Abs(extra) > 0.0001f)
 						faceFlags |= 0x4000000;
 
-					// Now room index and vert count
-					roomIndex = reader.ReadUInt32();
-					vertCount = reader.ReadUInt32();
-
-					Logger.Debug(logSrc, $"Face {i} has {vertCount} vertices");
+					uint roomIndex = reader.ReadUInt32();
+					uint vertCount = reader.ReadUInt32();
 
 					List<int> localIndices = new();
 
 					for (int j = 0; j < vertCount; j++)
 					{
-						uint rawVid = reader.ReadUInt32(); // Vertex index
+						uint vid = reader.ReadUInt32();
 						float u = reader.ReadSingle();
 						float v = reader.ReadSingle();
+						reader.BaseStream.Seek(4, SeekOrigin.Current); // RGBA
 
-						byte r = reader.ReadByte();
-						byte g = reader.ReadByte();
-						byte b = reader.ReadByte();
-						byte a = reader.ReadByte();
+						if (vid >= rawVerts.Count)
+							continue;
 
-						if (rawVid >= rawVerts.Count)
+						Vector3 pos = rawVerts[(int)vid];
+						Vector2 uv = new(u, v);
+						var key = QuantizedKey(pos, uv);
+
+						if (!vertexLookup.TryGetValue(key, out int idx))
 						{
-							Logger.Warn(logSrc, $"Invalid vertex index {rawVid} on face {i}");
-							break;
+							idx = finalVerts.Count;
+							finalVerts.Add(pos);
+							finalUVs.Add(uv);
+							vertexLookup[key] = idx;
 						}
 
-						Vector3 pos = rawVerts[(int)rawVid];
-						Vector2 uv = new(u, v);
-
-						int newIdx = finalVerts.Count;
-						finalVerts.Add(pos);
-						finalUVs.Add(uv);
-						localIndices.Add(newIdx);
+						localIndices.Add(idx);
 					}
 
-					// Face visibility filtering
 					bool isInvisible = (faceFlags & 0x2000) != 0;
 					bool isHole = (faceFlags & 0x0008) != 0;
 					bool isAlpha = (faceFlags & 0x0040) != 0;
@@ -850,16 +850,10 @@ namespace RFGConverter
 
 					if (Config.TriangulatePolygons)
 					{
-						// Triangulate face (fan method)
 						for (int j = 1; j < localIndices.Count - 1; j++)
 						{
-							int i0 = localIndices[0];
-							int i1 = localIndices[j];
-							int i2 = localIndices[j + 1];
-
-							indices.Add(i0);
-							indices.Add(i1);
-							indices.Add(i2);
+							int i0 = localIndices[0], i1 = localIndices[j], i2 = localIndices[j + 1];
+							indices.AddRange(new[] { i0, i1, i2 });
 
 							solid.Faces.Add(new Face
 							{
@@ -876,27 +870,22 @@ namespace RFGConverter
 							TextureIndex = textureIndex
 						});
 					}
-
-					long end = reader.BaseStream.Position;
-					Logger.Debug(logSrc, $"Face {i} size: {end - start} bytes");
 				}
 
 				brush.Vertices = finalVerts;
 				brush.UVs = finalUVs;
 				brush.Indices = indices;
 
-				// Flags, Life, State
 				if (reader.BaseStream.Position + 12 <= reader.BaseStream.Length)
 				{
-					brush.Solid.Flags = reader.ReadUInt32();	// store flags
-					brush.Solid.Life = reader.ReadInt32();		// life
-					brush.Solid.State = reader.ReadInt32();		// state
+					brush.Solid.Flags = reader.ReadUInt32();
+					brush.Solid.Life = reader.ReadInt32();
+					brush.Solid.State = reader.ReadInt32();
 				}
-
 			}
 			catch (Exception ex)
 			{
-				Logger.Error(logSrc, $"Exception in ReadRF2Brush: {ex.Message}");
+				Logger.Error("RflBrushParser", $"Exception in ReadRF2Brush: {ex.Message}");
 			}
 
 			return brush;
@@ -987,7 +976,7 @@ namespace RFGConverter
 				brush.TextureName = textures.Count > 0 ? textures[0] : "missing_texture"; // fallback
 
 				// Face Scroll Data (new format)
-				if (rfl_version <= 0xB4)
+				if (rfl_version > 0xB4)
 				{
 					int numFaceScrollData = reader.ReadInt32();
 					Logger.Debug(logSrc, $"numFaceScrollData: {numFaceScrollData}");
@@ -1011,11 +1000,11 @@ namespace RFGConverter
 				for (int i = 0; i < numSubroomLists; i++)
 					reader.BaseStream.Seek(8, SeekOrigin.Current);
 
-				// ⭐️ FIX: Read numPortals BEFORE vertices!
+				// numPortals
 				int numPortals = reader.ReadInt32();
 				Logger.Debug(logSrc, $"numPortals: {numPortals}");
 
-				// Now safe to read vertices
+				// numVertices
 				int numVertices = reader.ReadInt32();
 				Logger.Debug(logSrc, $"numVertices: {numVertices}");
 
@@ -1144,6 +1133,11 @@ namespace RFGConverter
 			}
 			else
 			{
+				if (faceIndices.Count > 3)
+				{
+					Logger.Debug(logSrc, $"Parsing ngon face with {faceIndices.Count} vertices.");
+				}
+
 				brush.Solid.Faces.Add(new Face
 				{
 					Vertices = faceIndices,

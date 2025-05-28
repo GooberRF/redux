@@ -15,6 +15,8 @@ namespace redux
 			using var stream = File.Create(outputPath);
 			using var writer = new BinaryWriter(stream);
 
+			Logger.Info(logSrc, $"Writing RFG to {outputPath}");
+
 			// Header
 			writer.Write(0xD43DD00D);			// Magic for RFG files
 			writer.Write(0x0000012C);			// Version 300 (0x12C)
@@ -90,8 +92,15 @@ namespace redux
 						newFace.Vertices.Add(vertices.Count - 1);
 					}
 
+					if (newFace.Vertices.Count > 3)
+					{
+						Logger.Debug(logSrc, $"Exported an ngon face with {newFace.Vertices.Count} vertices on brush {brush.UID}.");
+					}
+					
 					remappedFaces.Add(newFace);
 				}
+
+				Logger.Debug(logSrc, $"Brush {brush.UID} has {vertices.Count} vertices, {remappedFaces.Count} faces");
 
 				// Vertices
 				writer.Write(vertices.Count);
@@ -106,11 +115,18 @@ namespace redux
 				writer.Write(remappedFaces.Count);
 				foreach (var face in remappedFaces)
 				{
-					Vector3 p0 = vertices[face.Vertices[0]];
-					Vector3 p1 = vertices[face.Vertices[1]];
-					Vector3 p2 = vertices[face.Vertices[2]];
-					Vector3 normal = Vector3.Normalize(Vector3.Cross(p1 - p0, p2 - p0));
-					float dist = -Vector3.Dot(normal, p0);
+					Vector3 normal = Vector3.Zero;
+					Vector3 origin = vertices[face.Vertices[0]];
+
+					for (int i = 1; i < face.Vertices.Count - 1; i++)
+					{
+						var v1 = vertices[face.Vertices[i]] - origin;
+						var v2 = vertices[face.Vertices[i + 1]] - origin;
+						normal += Vector3.Cross(v1, v2);
+					}
+
+					normal = Vector3.Normalize(normal);
+					float dist = -Vector3.Dot(normal, origin);
 
 					writer.Write(normal.X);
 					writer.Write(normal.Y);
@@ -139,12 +155,25 @@ namespace redux
 
 				writer.Write(0); // Surfaces
 
-				// Brush footer
-				writer.Write(brush.Solid.Flags);
-				writer.Write(brush.Solid.Life);
-				writer.Write(brush.Solid.State);
-				//writer.Write(-1); // life
-				//writer.Write(3);  // state (0 = deselected, 2 = locked, 3 = selected)
+				uint exportFlags = brush.Solid.Flags;
+
+				// If desired, make RF2 geoable brushes non-detail so they can be geoed in RF1
+				if (Config.SetRF2GeoableNonDetail) {
+					exportFlags = (uint)SolidFlagUtils.StripRF2Geoable((SolidFlags)exportFlags);
+					Logger.Debug(logSrc, $"Removing detail flag from RF2 geoable brush {brush.UID}.");
+				}
+
+				// Only include flags RF1 supports
+				exportFlags = (uint)SolidFlagUtils.MakeRF1SafeFlags((SolidFlags)exportFlags);
+				writer.Write(exportFlags);
+
+				// RF1 doesn't support the RF2 geoable flag. In RF1, any brush with life > -1 breaks like glass.
+				// So any brush with that flag needs its life set to -1 during the conversion
+				int exportLife = ((brush.Solid.Flags & (uint)SolidFlags.Geoable) != 0)
+				? -1
+				: brush.Solid.Life;
+				writer.Write(exportLife);
+				writer.Write(brush.Solid.State); // state (0 = deselected, 2 = locked, 3 = selected)
 			}
 
 			// Write zeroes for other sections
