@@ -339,6 +339,8 @@ namespace RFGConverter
 			AddManualTranslation("mtl_jpad_oct1.tga", "mtl_L15S2_lift.tga");
 			AddManualTranslation("mtl_jpad_oct2.tga", "mtl_jumppad01.tga");
 			AddManualTranslation("mtl_jpad_oct4.tga", "mtl_jumppad02.tga");
+			AddManualTranslation("cpt_012red01.tga", "sld_grf2012red01a.tga");
+			AddManualTranslation("mtl_122_grate2.tga", "mtl_grf2122_grate.tga");
 		}
 
 		public static void AddManualTranslation(string original, string translated)

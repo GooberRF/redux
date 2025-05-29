@@ -17,14 +17,12 @@ namespace redux
 
 			Logger.Info(logSrc, $"Writing RFG to {outputPath}");
 
-			// Header
-			writer.Write(0xD43DD00D);			// Magic for RFG files
-			writer.Write(0x0000012C);			// Version 300 (0x12C)
-			writer.Write(1);					// Number of groups
-			Utils.WriteVString(writer, "box");	// group name
-			writer.Write((byte)0);				// is_moving = 0 (static group)
+			writer.Write(0xD43DD00D); // Magic
+			writer.Write(0x0000012C); // Version
+			writer.Write(1); // Num groups
+			Utils.WriteVString(writer, "box");
+			writer.Write((byte)0); // is_moving = false
 
-			// Brushes
 			writer.Write(mesh.Brushes.Count);
 			foreach (var brush in mesh.Brushes)
 			{
@@ -41,40 +39,29 @@ namespace redux
 				string flagsSummary = flagDescriptions.Count > 0 ? string.Join(", ", flagDescriptions) : "none";
 				Logger.Debug(logSrc, $"Writing brush {brush.UID}, with life {brush.Solid.Life}, state {brush.Solid.State}, and flags 0x{flags:X8} ({flagsSummary})");
 
-				// UID
 				writer.Write(brush.UID);
-
-				// Position
 				writer.Write(brush.Position.X);
 				writer.Write(brush.Position.Y);
 				writer.Write(brush.Position.Z);
 
-				// Orientation
-				Vector3 fwd = new(brush.RotationMatrix.M31, brush.RotationMatrix.M32, brush.RotationMatrix.M33);
-				Vector3 right = new(brush.RotationMatrix.M11, brush.RotationMatrix.M12, brush.RotationMatrix.M13);
-				Vector3 up = new(brush.RotationMatrix.M21, brush.RotationMatrix.M22, brush.RotationMatrix.M23);
+				var fwd = new Vector3(brush.RotationMatrix.M31, brush.RotationMatrix.M32, brush.RotationMatrix.M33);
+				var right = new Vector3(brush.RotationMatrix.M11, brush.RotationMatrix.M12, brush.RotationMatrix.M13);
+				var up = new Vector3(brush.RotationMatrix.M21, brush.RotationMatrix.M22, brush.RotationMatrix.M23);
 				writer.Write(fwd.X); writer.Write(fwd.Y); writer.Write(fwd.Z);
 				writer.Write(right.X); writer.Write(right.Y); writer.Write(right.Z);
 				writer.Write(up.X); writer.Write(up.Y); writer.Write(up.Z);
 
-				// Solid info
-				writer.Write(0); // unknown1
-				writer.Write(0); // unknown2
-				Utils.WriteVString(writer, ""); // unknown3
+				writer.Write(0); writer.Write(0); Utils.WriteVString(writer, "");
+				writer.Write(brush.Solid.Textures.Count);
 
 				Logger.Debug(logSrc, $"Brush {brush.UID} textures: {string.Join(", ", brush.Solid.Textures)}");
-				writer.Write(brush.Solid.Textures.Count);
+
 				foreach (var tex in brush.Solid.Textures)
 					Utils.WriteVString(writer, tex);
+				writer.Write(0); writer.Write(0); writer.Write(0); writer.Write(0);
 
-				writer.Write(0); // num_face_scrolls
-				writer.Write(0); // num_rooms
-				writer.Write(0); // num_subroom_lists
-				writer.Write(0); // num_portals
-
-				// Flattened vertex and UV data
-				var vertices = new List<Vector3>();
-				var uvs = new List<Vector2>();
+				var exportVerts = new List<Vector3>();
+				var vertMap = new Dictionary<(int, int, int), int>();
 				var remappedFaces = new List<Face>();
 
 				foreach (var face in brush.Solid.Faces)
@@ -82,85 +69,94 @@ namespace redux
 					var newFace = new Face
 					{
 						TextureIndex = face.TextureIndex,
-						Vertices = new List<int>()
+						Vertices = new List<int>(),
+						UVs = new List<Vector2>()
 					};
 
-					foreach (var vi in face.Vertices)
+					for (int i = 0; i < face.Vertices.Count; i++)
 					{
-						vertices.Add(brush.Vertices[vi]);
-						uvs.Add(brush.UVs[vi]);
-						newFace.Vertices.Add(vertices.Count - 1);
+						var posIndex = face.Vertices[i];
+						var pos = brush.Vertices[posIndex];
+
+						// Gracefully handle missing UVs (if corrupted input)
+						var uv = (i < face.UVs.Count) ? face.UVs[i] : Vector2.Zero;
+
+						var key = ((int)(pos.X * 1000), (int)(pos.Y * 1000), (int)(pos.Z * 1000));
+						if (!vertMap.TryGetValue(key, out int vertIdx))
+						{
+							vertIdx = exportVerts.Count;
+							exportVerts.Add(pos);
+							vertMap[key] = vertIdx;
+						}
+
+
+						newFace.Vertices.Add(vertIdx);
+						newFace.UVs.Add(uv);
 					}
 
 					if (newFace.Vertices.Count > 3)
 					{
 						Logger.Debug(logSrc, $"Exported an ngon face with {newFace.Vertices.Count} vertices on brush {brush.UID}.");
 					}
-					
+
 					remappedFaces.Add(newFace);
 				}
 
-				Logger.Debug(logSrc, $"Brush {brush.UID} has {vertices.Count} vertices, {remappedFaces.Count} faces");
-
-				// Vertices
-				writer.Write(vertices.Count);
-				foreach (var v in vertices)
-				{
+				writer.Write(exportVerts.Count);
+				foreach (var v in exportVerts) {
 					writer.Write(v.X);
 					writer.Write(v.Y);
 					writer.Write(v.Z);
 				}
 
-				// Faces
 				writer.Write(remappedFaces.Count);
 				foreach (var face in remappedFaces)
 				{
 					Vector3 normal = Vector3.Zero;
-					Vector3 origin = vertices[face.Vertices[0]];
-
+					var origin = exportVerts[face.Vertices[0]];
 					for (int i = 1; i < face.Vertices.Count - 1; i++)
-					{
-						var v1 = vertices[face.Vertices[i]] - origin;
-						var v2 = vertices[face.Vertices[i + 1]] - origin;
-						normal += Vector3.Cross(v1, v2);
-					}
-
+						normal += Vector3.Cross(
+							exportVerts[face.Vertices[i]] - origin,
+							exportVerts[face.Vertices[i + 1]] - origin
+						);
 					normal = Vector3.Normalize(normal);
 					float dist = -Vector3.Dot(normal, origin);
 
-					writer.Write(normal.X);
-					writer.Write(normal.Y);
-					writer.Write(normal.Z);
-					writer.Write(dist);
-
-					writer.Write(face.TextureIndex);
-					writer.Write(-1); // surface_index
-					writer.Write(-1); // face_id
-					writer.Write(-1); // reserved
-					writer.Write(-1); // reserved
-					writer.Write(0);  // portal_index
-					writer.Write((ushort)256); // face flags (256 = solid)
-					writer.Write((ushort)0); // reserved2
-					writer.Write(0); // smoothing groups
-					writer.Write(-1); // room index
-
+					writer.Write(normal.X); writer.Write(normal.Y); writer.Write(normal.Z); writer.Write(dist);
+					writer.Write(face.TextureIndex); writer.Write(-1); writer.Write(-1); writer.Write(-1); writer.Write(-1);
+					writer.Write(0); writer.Write((ushort)256); writer.Write((ushort)0); writer.Write(0); writer.Write(-1);
 					writer.Write(face.Vertices.Count);
-					foreach (var vi in face.Vertices)
+					for (int i = 0; i < face.Vertices.Count; i++)
 					{
+						int vi = face.Vertices[i];
+						var uv = face.UVs[i];
 						writer.Write(vi);
-						writer.Write(uvs[vi].X);
-						writer.Write(uvs[vi].Y);
+						writer.Write(uv.X);
+						writer.Write(uv.Y);
 					}
 				}
 
-				writer.Write(0); // Surfaces
+				Logger.Debug(logSrc, $"Brush {brush.UID} has {exportVerts.Count} vertices, {remappedFaces.Count} faces");
+
+				writer.Write(0);
 
 				uint exportFlags = brush.Solid.Flags;
 
+				bool RF2GeoableFlag = false;
+
 				// If desired, make RF2 geoable brushes non-detail so they can be geoed in RF1
-				if (Config.SetRF2GeoableNonDetail) {
-					exportFlags = (uint)SolidFlagUtils.StripRF2Geoable((SolidFlags)exportFlags);
-					Logger.Debug(logSrc, $"Removing detail flag from RF2 geoable brush {brush.UID}.");
+				if (Config.SetRF2GeoableNonDetail)
+				{
+					var before = (SolidFlags)exportFlags;
+					var after = SolidFlagUtils.StripRF2Geoable(before);
+
+					if ((before & SolidFlags.Detail) != 0 && (after & SolidFlags.Detail) == 0)
+					{
+						Logger.Debug(logSrc, $"Removing detail flag from RF2 geoable brush {brush.UID}.");
+						RF2GeoableFlag = true;
+					}
+
+					exportFlags = (uint)after;
 				}
 
 				// Only include flags RF1 supports
@@ -169,16 +165,12 @@ namespace redux
 
 				// RF1 doesn't support the RF2 geoable flag. In RF1, any brush with life > -1 breaks like glass.
 				// So any brush with that flag needs its life set to -1 during the conversion
-				int exportLife = ((brush.Solid.Flags & (uint)SolidFlags.Geoable) != 0)
-				? -1
-				: brush.Solid.Life;
-				writer.Write(exportLife);
+				writer.Write(RF2GeoableFlag ? -1 : brush.Solid.Life);
+
 				writer.Write(brush.Solid.State); // state (0 = deselected, 2 = locked, 3 = selected)
 			}
 
-			// Write zeroes for other sections
-			for (int i = 0; i < 22; i++)
-				writer.Write(0);
+			for (int i = 0; i < 22; i++) writer.Write(0);
 		}
 	}
 }

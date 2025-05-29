@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
 using static System.Collections.Specialized.BitVector32;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace RFGConverter
 {
@@ -633,441 +634,379 @@ namespace RFGConverter
 		public static Brush ReadRF2Brush(BinaryReader reader)
 		{
 			var brush = new Brush();
-			brush.Solid = new Solid();
-			var solid = brush.Solid;
+			var solid = new Solid();
+			brush.Solid = solid;
 
-			static (Vector3, Vector2) QuantizedKey(Vector3 pos, Vector2 uv, float precision = 0.0001f)
+			// Read brush metadata
+			brush.UID = reader.ReadInt32();
+			Logger.Debug(logSrc, $"UID: {brush.UID}");
+
+			brush.Position = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+			Logger.Debug(logSrc, $"Position: {brush.Position}");
+
+			// Read rotation matrix
+			Vector3 fwd = new(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+			Vector3 right = new(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+			Vector3 up = new(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+
+			brush.RotationMatrix = new Matrix4x4(
+				right.X, right.Y, right.Z, 0,
+				up.X, up.Y, up.Z, 0,
+				fwd.X, fwd.Y, fwd.Z, 0,
+				0, 0, 0, 1
+			);
+
+			string name = Utils.ReadVString(reader); // geometry name
+			Logger.Debug(logSrc, $"Geometry name: \"{name}\"");
+
+			reader.ReadUInt32(); // unknown field
+
+			// Read textures
+			int numTextures = reader.ReadInt32();
+			Logger.Debug(logSrc, $"numTextures: {numTextures}");
+			for (int i = 0; i < numTextures; i++)
 			{
-				int Q(float f) => (int)(f / precision);
-				return (
-					new Vector3(Q(pos.X), Q(pos.Y), Q(pos.Z)),
-					new Vector2(Q(uv.X), Q(uv.Y))
-				);
+				string tex = Utils.ReadVString(reader);
+
+				if (Config.TranslateRF2Textures)
+				{
+					string translatedTex = RF2TextureTranslator.TranslateRF2Texture(tex);
+					Logger.Debug(logSrc, $"Texture {i}: \"{tex}\" → \"{translatedTex}\"");
+					solid.Textures.Add(translatedTex);
+				}
+				else
+				{
+					Logger.Debug(logSrc, $"Texture {i}: \"{tex}\"");
+					solid.Textures.Add(tex);
+				}
 			}
 
-			try
+			// Skip room data
+			int numRooms = reader.ReadInt32();
+			Logger.Debug(logSrc, $"numRooms: {numRooms}");
+
+			for (int i = 0; i < numRooms; i++)
 			{
-				// UID
-				if (reader.BaseStream.Position + 4 > reader.BaseStream.Length) return brush;
-				brush.UID = reader.ReadInt32();
-				Logger.Debug(logSrc, $"UID: {brush.UID}");
-
-				// Position
-				if (reader.BaseStream.Position + 12 > reader.BaseStream.Length) return brush;
-				brush.Position = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
-				Logger.Debug(logSrc, $"Position: {brush.Position}");
-
-				// Rotation Matrix
-				if (reader.BaseStream.Position + 36 > reader.BaseStream.Length) return brush;
-				// Correct reordering when reading RFG brush rotation
-				float fwdX = reader.ReadSingle();
-				float fwdY = reader.ReadSingle();
-				float fwdZ = reader.ReadSingle();
-				float rightX = reader.ReadSingle();
-				float rightY = reader.ReadSingle();
-				float rightZ = reader.ReadSingle();
-				float upX = reader.ReadSingle();
-				float upY = reader.ReadSingle();
-				float upZ = reader.ReadSingle();
-
-				// Map to standard matrix:
-				// Forward = Z axis
-				// Right = X axis
-				// Up = Y axis
-
-				Vector3 right = new(rightX, rightY, rightZ);
-				Vector3 up = new(upX, upY, upZ);
-				Vector3 forward = new(fwdX, fwdY, fwdZ);
-
-				// Treat RFG as storing basis vectors in rows
-				brush.RotationMatrix = new Matrix4x4(
-					right.X, right.Y, right.Z, 0f,
-					up.X, up.Y, up.Z, 0f,
-					forward.X, forward.Y, forward.Z, 0f,
-					0f, 0f, 0f, 1f
-				);
-
-				string name = Utils.ReadVString(reader);
-				Logger.Debug(logSrc, $"Geometry name: \"{name}\"");
-
-				reader.ReadUInt32(); // unknown field
-
-				int numTextures = reader.ReadInt32();
-				Logger.Debug(logSrc, $"numTextures: {numTextures}");
-				for (int i = 0; i < numTextures; i++)
-				{
-					string tex = Utils.ReadVString(reader);
-
-					if (Config.TranslateRF2Textures)
-					{
-						string translatedTex = RF2TextureTranslator.TranslateRF2Texture(tex);
-						Logger.Debug(logSrc, $"Texture {i}: \"{tex}\" → \"{translatedTex}\"");
-						solid.Textures.Add(translatedTex);
-					}
-					else
-					{
-						Logger.Debug(logSrc, $"Texture {i}: \"{tex}\"");
-						solid.Textures.Add(tex);
-					}
-				}
-
-				// Read room data
-				int numRooms = reader.ReadInt32();
-				Logger.Debug(logSrc, $"numRooms: {numRooms}");
-				for (int i = 0; i < numRooms; i++)
-				{
-					int type = reader.ReadInt32();
-
-					// Bounding box: Vector3 min, Vector3 max
-					Vector3 aabbMin = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
-					Vector3 aabbMax = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
-
-					int unk1 = reader.ReadInt32();
-					float unk2 = reader.ReadSingle();
-					string unusedName = Utils.ReadVString(reader);
-
-					float unk3 = reader.ReadSingle();
-					float unk4 = reader.ReadSingle();
-					float unk5 = reader.ReadSingle();
-
-					int unk6 = reader.ReadInt32();
-					float unk7 = reader.ReadSingle();
-					int unk8 = reader.ReadInt32();
-
-					// pre-284 rfls have a conditional check here, but we don't have any of those so don't worry about it
-
-					float unk9 = reader.ReadSingle();
-					float unk10 = reader.ReadSingle();
-					float unk11 = reader.ReadSingle();
-					float unk12 = reader.ReadSingle();
-				}
-
-				// Subrooms
-				int numSubroomLinks = reader.ReadInt32();
-				Logger.Debug(logSrc, $"numSubroomLinks: {numSubroomLinks} @ 0x{reader.BaseStream.Position - 4:X}");
-
-				for (int i = 0; i < numSubroomLinks; i++)
-				{
-					int roomID = reader.ReadInt32();
-					int subroomCount = reader.ReadInt32();
-
-					for (int j = 0; j < subroomCount; j++)
-						reader.ReadInt32();
-				}
-
-				// I'm not quite sure what these are, but we can read and skip them
-				int numURoomLinks = reader.ReadInt32();
-				Logger.Debug(logSrc, $"numURoomLinks: {numURoomLinks}");
-
-				for (int i = 0; i < numURoomLinks; i++)
-				{
-					reader.ReadInt32(); // roomID
-					reader.ReadInt32(); // room2ID
-				}
-
-				// Portals
-				int numPortals = reader.ReadInt32();
-				Logger.Debug(logSrc, $"numPortals: {numPortals}");
-				reader.BaseStream.Seek(numPortals * 32, SeekOrigin.Current); // Skip past portal data
-
-				// Vertices
-				int numVertices = reader.ReadInt32();
-				var rawVerts = new List<Vector3>(numVertices);
-				for (int i = 0; i < numVertices; i++)
-					rawVerts.Add(new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()));
-
-				int numFaces = reader.ReadInt32();
-				List<Vector3> finalVerts = new();
-				List<Vector2> finalUVs = new();
-				List<int> indices = new();
-				var vertexLookup = new Dictionary<(Vector3, Vector2), int>();
-
-				for (int i = 0; i < numFaces; i++)
-				{
-					reader.BaseStream.Seek(16, SeekOrigin.Current); // skip normal + dist
-					int textureIndex = reader.ReadInt32();
-					reader.BaseStream.Seek(12, SeekOrigin.Current); // skip A, B, C
-					uint faceFlags = reader.ReadUInt32();
-					reader.ReadUInt32(); // smoothing
-
-					if ((faceFlags & 0x8000) != 0)
-					{
-						reader.ReadSingle(); // unknown
-						float tmp = reader.ReadSingle();
-						faceFlags |= tmp switch
-						{
-							1.0f => 0x100000,
-							1.35f => 0x200000,
-							1.5f => 0x400000,
-							_ => 0x800000
-						};
-					}
-
-					reader.BaseStream.Seek(3, SeekOrigin.Current);
-					float extra = reader.ReadSingle();
-					if (Math.Abs(extra) > 0.0001f)
-						faceFlags |= 0x4000000;
-
-					uint roomIndex = reader.ReadUInt32();
-					uint vertCount = reader.ReadUInt32();
-
-					List<int> localIndices = new();
-
-					for (int j = 0; j < vertCount; j++)
-					{
-						uint vid = reader.ReadUInt32();
-						float u = reader.ReadSingle();
-						float v = reader.ReadSingle();
-						reader.BaseStream.Seek(4, SeekOrigin.Current); // RGBA
-
-						if (vid >= rawVerts.Count)
-							continue;
-
-						Vector3 pos = rawVerts[(int)vid];
-						Vector2 uv = new(u, v);
-						var key = QuantizedKey(pos, uv);
-
-						if (!vertexLookup.TryGetValue(key, out int idx))
-						{
-							idx = finalVerts.Count;
-							finalVerts.Add(pos);
-							finalUVs.Add(uv);
-							vertexLookup[key] = idx;
-						}
-
-						localIndices.Add(idx);
-					}
-
-					bool isInvisible = (faceFlags & 0x2000) != 0;
-					bool isHole = (faceFlags & 0x0008) != 0;
-					bool isAlpha = (faceFlags & 0x0040) != 0;
-					bool isDetail = (faceFlags & 0x0010) != 0;
-
-					if (!Config.IncludeInvisibleFaces && isInvisible) continue;
-					if (!Config.IncludeHoleFaces && isHole) continue;
-					if (!Config.IncludeAlphaFaces && isAlpha) continue;
-					if (!Config.IncludeDetailFaces && isDetail) continue;
-
-					if (Config.TriangulatePolygons)
-					{
-						for (int j = 1; j < localIndices.Count - 1; j++)
-						{
-							int i0 = localIndices[0], i1 = localIndices[j], i2 = localIndices[j + 1];
-							indices.AddRange(new[] { i0, i1, i2 });
-
-							solid.Faces.Add(new Face
-							{
-								Vertices = new List<int> { i0, i1, i2 },
-								TextureIndex = textureIndex
-							});
-						}
-					}
-					else
-					{
-						solid.Faces.Add(new Face
-						{
-							Vertices = localIndices,
-							TextureIndex = textureIndex
-						});
-					}
-				}
-
-				brush.Vertices = finalVerts;
-				brush.UVs = finalUVs;
-				brush.Indices = indices;
-
-				if (reader.BaseStream.Position + 12 <= reader.BaseStream.Length)
-				{
-					brush.Solid.Flags = reader.ReadUInt32();
-					brush.Solid.Life = reader.ReadInt32();
-					brush.Solid.State = reader.ReadInt32();
-				}
+				reader.BaseStream.Seek(64, SeekOrigin.Current);
+				Utils.ReadVString(reader);
+				reader.BaseStream.Seek(32, SeekOrigin.Current);
 			}
-			catch (Exception ex)
+			int numSubroomLinks = reader.ReadInt32();
+			Logger.Debug(logSrc, $"numSubroomLinks: {numSubroomLinks} @ 0x{reader.BaseStream.Position - 4:X}");
+
+			for (int i = 0; i < numSubroomLinks; i++)
+				reader.BaseStream.Seek(8 + 4 * reader.ReadInt32(), SeekOrigin.Current);
+			int numURoomLinks = reader.ReadInt32();
+			Logger.Debug(logSrc, $"numURoomLinks: {numURoomLinks}");
+
+			reader.BaseStream.Seek(numURoomLinks * 8, SeekOrigin.Current);
+			int numPortals = reader.ReadInt32();
+			Logger.Debug(logSrc, $"numPortals: {numPortals}");
+
+			reader.BaseStream.Seek(numPortals * 32, SeekOrigin.Current);
+
+			// Read raw vertices
+			int numRawVerts = reader.ReadInt32();
+			var rawVerts = new List<Vector3>(numRawVerts);
+			for (int i = 0; i < numRawVerts; i++)
+				rawVerts.Add(new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()));
+
+			// Deduplicated position store
+			var positionMap = new Dictionary<(int, int, int), int>();
+			var uniqueVerts = new List<Vector3>();
+			var indices = new List<int>();
+			var uvs = new List<Vector2>();
+
+			int numFaces = reader.ReadInt32();
+			for (int i = 0; i < numFaces; i++)
 			{
-				Logger.Error("RflBrushParser", $"Exception in ReadRF2Brush: {ex.Message}");
+				reader.BaseStream.Seek(16, SeekOrigin.Current); // normal + dist
+				int textureIndex = reader.ReadInt32();
+				reader.BaseStream.Seek(12, SeekOrigin.Current); // A, B, C
+				uint faceFlags = reader.ReadUInt32();
+				reader.ReadUInt32(); // smoothing groups
+
+				if ((faceFlags & 0x8000) != 0)
+				{
+					reader.ReadSingle();
+					float f = reader.ReadSingle();
+				}
+
+				reader.BaseStream.Seek(3, SeekOrigin.Current);
+				float extra = reader.ReadSingle();
+
+				reader.ReadUInt32(); // roomIndex
+				int vertCount = reader.ReadInt32();
+
+				var faceIndices = new List<int>();
+				var faceUVs = new List<Vector2>();
+
+				for (int j = 0; j < vertCount; j++)
+				{
+					uint vid = reader.ReadUInt32();
+					float u = reader.ReadSingle();
+					float v = reader.ReadSingle();
+					reader.BaseStream.Seek(4, SeekOrigin.Current); // RGBA
+
+					if (vid >= rawVerts.Count) continue;
+
+					Vector3 pos = rawVerts[(int)vid];
+
+					// Quantized position key for deduplication
+					var key = ((int)(pos.X * 1000), (int)(pos.Y * 1000), (int)(pos.Z * 1000));
+					if (!positionMap.TryGetValue(key, out int posIndex))
+					{
+						posIndex = uniqueVerts.Count;
+						uniqueVerts.Add(pos);
+						positionMap[key] = posIndex;
+					}
+
+					faceIndices.Add(posIndex);
+					faceUVs.Add(new Vector2(u, v));
+					uvs.Add(new Vector2(u, v));         // Per-face corner UV
+					indices.Add(posIndex);              // Index into shared Vertices
+				}
+
+				// Add face with deduped position indices
+				solid.Faces.Add(new Face
+				{
+					TextureIndex = textureIndex,
+					Vertices = faceIndices,
+					UVs = faceUVs
+				});
+
+			}
+
+			brush.Vertices = uniqueVerts;
+			brush.Indices = indices;
+			brush.UVs = uvs;
+
+			// Optional final metadata
+			if (reader.BaseStream.Position + 12 <= reader.BaseStream.Length)
+			{
+				solid.Flags = reader.ReadUInt32();
+				solid.Life = reader.ReadInt32();
+				solid.State = reader.ReadInt32();
 			}
 
 			return brush;
 		}
 
+
 		public static Brush ReadRF1Brush(BinaryReader reader, int rfl_version)
 		{
 			var brush = new Brush();
+			var solid = new Solid();
+			brush.Solid = solid;
 
-			try
+			brush.UID = reader.ReadInt32();
+			brush.Position = new Vector3(
+				reader.ReadSingle(),
+				reader.ReadSingle(),
+				reader.ReadSingle()
+			);
+
+			float fwdX = reader.ReadSingle();
+			float fwdY = reader.ReadSingle();
+			float fwdZ = reader.ReadSingle();
+			float rightX = reader.ReadSingle();
+			float rightY = reader.ReadSingle();
+			float rightZ = reader.ReadSingle();
+			float upX = reader.ReadSingle();
+			float upY = reader.ReadSingle();
+			float upZ = reader.ReadSingle();
+			brush.RotationMatrix = new Matrix4x4(
+				rightX, rightY, rightZ, 0f,
+				upX, upY, upZ, 0f,
+				fwdX, fwdY, fwdZ, 0f,
+				0f, 0f, 0f, 1f
+			);
+
+			// Modifiability fields (RF1 0xC8+)
+			if (rfl_version >= 0xC8)
 			{
-				// UID
-				if (reader.BaseStream.Position + 4 > reader.BaseStream.Length) return brush;
-				brush.UID = reader.ReadInt32();
-				Logger.Debug(logSrc, $"UID: {brush.UID}");
-
-				// Position
-				if (reader.BaseStream.Position + 12 > reader.BaseStream.Length) return brush;
-				brush.Position = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
-				Logger.Debug(logSrc, $"Position: {brush.Position}");
-
-				// Rotation Matrix
-				if (reader.BaseStream.Position + 36 > reader.BaseStream.Length) return brush;
-				// Correct reordering when reading RFG brush rotation
-				float fwdX = reader.ReadSingle();
-				float fwdY = reader.ReadSingle();
-				float fwdZ = reader.ReadSingle();
-				float rightX = reader.ReadSingle();
-				float rightY = reader.ReadSingle();
-				float rightZ = reader.ReadSingle();
-				float upX = reader.ReadSingle();
-				float upY = reader.ReadSingle();
-				float upZ = reader.ReadSingle();
-
-				// Map to standard matrix:
-				// Forward = Z axis
-				// Right = X axis
-				// Up = Y axis
-
-				Vector3 right = new(rightX, rightY, rightZ);
-				Vector3 up = new(upX, upY, upZ);
-				Vector3 forward = new(fwdX, fwdY, fwdZ);
-
-				// Treat RFG as storing basis vectors in rows
-				brush.RotationMatrix = new Matrix4x4(
-					right.X, right.Y, right.Z, 0f,
-					up.X, up.Y, up.Z, 0f,
-					forward.X, forward.Y, forward.Z, 0f,
-					0f, 0f, 0f, 1f
-				);
-
-				// modifiability fields
-				if (rfl_version >= 0xC8)
-				{
-					reader.ReadInt32();
-					reader.ReadInt32();
-				}
-
-				// Geometry Name (vstring)
-				string geomName = Utils.ReadVString(reader);
-				Logger.Debug(logSrc, $"Geometry name: \"{geomName}\"");
-
-				// old modifiability field
-				if (rfl_version < 0xC8)
-				{
-					reader.ReadInt32();
-				}
-
-				// Textures
-				int numTextures = reader.ReadInt32();
-				Logger.Debug(logSrc, $"numTextures: {numTextures}");
-				var textures = new List<string>();
-				for (int i = 0; i < numTextures; i++)
-				{
-					string tex = Utils.ReadVString(reader);
-					Logger.Debug(logSrc, $"Texture {i}: \"{tex}\"");
-					textures.Add(tex);
-				}
-
-				// Always create a fresh Solid for this brush
-				brush.Solid = new Solid
-				{
-					Textures = new List<string>(textures),
-					Faces = new List<Face>(),
-					Vertices = new List<Vector3>()
-				};
-
-				brush.TextureName = textures.Count > 0 ? textures[0] : "missing_texture"; // fallback
-
-				// Face Scroll Data (new format)
-				if (rfl_version > 0xB4)
-				{
-					int numFaceScrollData = reader.ReadInt32();
-					Logger.Debug(logSrc, $"numFaceScrollData: {numFaceScrollData}");
-					for (int i = 0; i < numFaceScrollData; i++)
-					{
-						reader.BaseStream.Seek(12, SeekOrigin.Current);
-					}
-				}
-
-				// Rooms
-				int numRooms = reader.ReadInt32();
-				Logger.Debug(logSrc, $"numRooms: {numRooms}");
-				for (int i = 0; i < numRooms; i++)
-				{
-					reader.BaseStream.Seek(28, SeekOrigin.Current); // room AABB + flags
-				}
-
-				// Subroom Lists
-				int numSubroomLists = reader.ReadInt32();
-				Logger.Debug(logSrc, $"numSubroomLists: {numSubroomLists}");
-				for (int i = 0; i < numSubroomLists; i++)
-					reader.BaseStream.Seek(8, SeekOrigin.Current);
-
-				// numPortals
-				int numPortals = reader.ReadInt32();
-				Logger.Debug(logSrc, $"numPortals: {numPortals}");
-
-				// numVertices
-				int numVertices = reader.ReadInt32();
-				Logger.Debug(logSrc, $"numVertices: {numVertices}");
-
-				var vertices = new List<Vector3>();
-				for (int i = 0; i < numVertices; i++)
-				{
-					if (reader.BaseStream.Position + 12 > reader.BaseStream.Length)
-					{
-						Logger.Warn(logSrc, "Unexpected end of stream while reading vertices.");
-						return brush;
-					}
-					Vector3 vertex = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
-					vertices.Add(vertex);
-				}
-
-				// Faces
-				int numFaces = reader.ReadInt32();
-				Logger.Debug(logSrc, $"numFaces: {numFaces}");
-				for (int i = 0; i < numFaces; i++)
-				{
-					if (reader.BaseStream.Position >= reader.BaseStream.Length)
-					{
-						Logger.Warn(logSrc, "Unexpected end of stream while reading faces.");
-						return brush;
-					}
-					ReadRF1Face(reader, brush, vertices);
-				}
-
-				// Surfaces
-				int numSurfaces = reader.ReadInt32();
-				Logger.Debug(logSrc, $"numSurfaces: {numSurfaces}");
-				for (int i = 0; i < numSurfaces; i++)
-				{
-					reader.BaseStream.Seek(96, SeekOrigin.Current); // each surface is 96 bytes
-				}
-
-				// Face Scroll Data (old format)
-				if (rfl_version <= 0xB4)
-				{
-					int numFaceScrollDataOld = reader.ReadInt32();
-					Logger.Debug(logSrc, $"numFaceScrollDataOld: {numFaceScrollDataOld}");
-					for (int i = 0; i < numFaceScrollDataOld; i++)
-					{
-						reader.BaseStream.Seek(12, SeekOrigin.Current);
-					}
-				}
-
-				brush.Solid.Flags = reader.ReadUInt32(); // store flags
-				brush.Solid.Life = reader.ReadInt32(); // life
-				brush.Solid.State = reader.ReadInt32(); // state
-
-				// Flags, Life, State
-				/*if (reader.BaseStream.Position + 12 <= reader.BaseStream.Length)
-				{
-				brush.Solid.Flags = reader.ReadUInt32(); // store flags
-					brush.Solid.Life = reader.ReadInt32(); // life
-					brush.Solid.State = reader.ReadInt32(); // state
-				}*/
+				reader.ReadUInt32();
+				reader.ReadUInt32();
 			}
-			catch (Exception ex)
+
+			// Geometry name
+			string geomName = Utils.ReadVString(reader);
+			Logger.Debug(logSrc, $"Geometry name: \"{geomName}\"");
+
+			// Old modifiability (pre‑0xC8)
+			if (rfl_version < 0xC8)
+				reader.ReadUInt32();
+
+			// Read textures
+			int numTextures = reader.ReadInt32();
+			Logger.Debug(logSrc, $"numTextures: {numTextures}");
+			var textures = new List<string>();
+			for (int i = 0; i < numTextures; i++)
 			{
-				Logger.Error(logSrc, $"Exception in ReadRF1Brush: {ex.Message}");
+				string tex = Utils.ReadVString(reader);
+				Logger.Debug(logSrc, $"Texture {i}: \"{tex}\"");
+				textures.Add(tex);
 			}
+			solid.Textures = textures;
+
+			// Face Scroll Data (new format)
+			if (rfl_version >= 0xB4)
+			{
+				int numFaceScrollData = reader.ReadInt32();
+				Logger.Debug(logSrc, $"numFaceScrollData: {numFaceScrollData}");
+				for (int i = 0; i < numFaceScrollData; i++)
+				{
+					reader.BaseStream.Seek(12, SeekOrigin.Current);
+				}
+			}
+
+			int numRooms = reader.ReadInt32();
+			Logger.Debug(logSrc, $"numRooms: {numRooms}");
+			for (int i = 0; i < numRooms; i++)
+			{
+				reader.BaseStream.Seek(28, SeekOrigin.Current); // room AABB + flags
+			}
+
+			// Subroom Lists
+			int numSubroomLists = reader.ReadInt32();
+			Logger.Debug(logSrc, $"numSubroomLists: {numSubroomLists}");
+			for (int i = 0; i < numSubroomLists; i++)
+				reader.BaseStream.Seek(8, SeekOrigin.Current);
+
+			// numPortals
+			int numPortals = reader.ReadInt32();
+			Logger.Debug(logSrc, $"numPortals: {numPortals}");
+
+			// Read raw vertex positions
+			int numRawVerts = reader.ReadInt32();
+			Logger.Debug(logSrc, $"numRawVerts: {numRawVerts}");
+			var rawVerts = new List<Vector3>(numRawVerts);
+			for (int i = 0; i < numRawVerts; i++)
+				rawVerts.Add(new Vector3(
+					reader.ReadSingle(),
+					reader.ReadSingle(),
+					reader.ReadSingle()
+				));
+
+			// Prepare shared pool for (pos + UV) → single index
+			var vertMap = new Dictionary<(int x, int y, int z, float u, float v), int>();
+			var sharedVerts = new List<Vector3>();
+			var sharedUVs = new List<Vector2>();
+
+			// Read faces, build shared pools & per-face indices/UVs
+			int numFaces = reader.ReadInt32();
+			Logger.Debug(logSrc, $"numFaces: {numFaces}");
+			for (int f = 0; f < numFaces; f++)
+			{
+				// Plane (skip normal + offset)
+				for (int i = 0; i < 4; i++)
+					reader.ReadSingle();
+
+				int textureIndex = reader.ReadInt32();
+				reader.ReadInt32(); // surface_index
+				reader.ReadInt32(); // face_id
+									//reader.BaseStream.Seek(8, SeekOrigin.Current); // reserved
+				int reserved1 = reader.ReadInt32();
+				int reserved2 = reader.ReadInt32();
+				int portal_index = reader.ReadInt32(); // portal index plus 2
+				uint face_flags = reader.ReadUInt16(); // flags
+				uint reserved3 = reader.ReadUInt16();
+				uint smoothing_groups = reader.ReadUInt32(); // smoothing groups
+				int room_index = reader.ReadInt32(); // room index (-1 for movers)
+				Logger.Debug(logSrc, $"room_index: {room_index}, face_flags: {face_flags}, portal_index: {portal_index}, smoothing groups: {smoothing_groups}, reserved1: {reserved1}, reserved2: {reserved2}, reserved3: {reserved3}");
+
+				int vertCount = reader.ReadInt32();
+				Logger.Debug(logSrc, $"vertCount: {vertCount}");
+
+				var faceIndices = new List<int>(vertCount);
+				var faceUVs = new List<Vector2>(vertCount);
+
+				for (int i = 0; i < vertCount; i++)
+				{
+					int rawIdx = reader.ReadInt32();
+					float u = reader.ReadSingle();
+					float v = reader.ReadSingle();
+
+					if (rawIdx < 0 || rawIdx >= rawVerts.Count)
+						continue;
+
+					var pos = rawVerts[rawIdx];
+					// quantize to ints to avoid float‐noise collisions
+					var key = (
+						(int)(pos.X * 1000),
+						(int)(pos.Y * 1000),
+						(int)(pos.Z * 1000),
+						u, v
+					);
+
+					if (!vertMap.TryGetValue(key, out int sharedIdx))
+					{
+						sharedIdx = sharedVerts.Count;
+						sharedVerts.Add(pos);
+						sharedUVs.Add(new Vector2(u, v));
+						vertMap[key] = sharedIdx;
+					}
+
+					faceIndices.Add(sharedIdx);
+					faceUVs.Add(new Vector2(u, v));
+				}
+
+				// Triangulate ngons
+				if (Config.TriangulatePolygons && faceIndices.Count > 3)
+				{
+					Logger.Debug(logSrc, $"Triangulating ngon face with {faceIndices.Count} vertices on brush {brush.UID}.");
+					for (int j = 1; j < faceIndices.Count - 1; j++)
+					{
+						solid.Faces.Add(new Face
+						{
+							TextureIndex = textureIndex,
+							Vertices = new List<int> {
+						faceIndices[0], faceIndices[j], faceIndices[j+1]
+					},
+							UVs = new List<Vector2> {
+						faceUVs[0], faceUVs[j], faceUVs[j+1]
+					}
+						});
+					}
+				}
+				else
+				{
+					solid.Faces.Add(new Face
+					{
+						TextureIndex = textureIndex,
+						Vertices = faceIndices,
+						UVs = faceUVs
+					});
+				}
+			}
+
+			// Ship shared pools back onto the brush
+			brush.Vertices = sharedVerts;
+			brush.UVs = sharedUVs;
+
+			// Surfaces
+			int numSurfaces = reader.ReadInt32();
+			for (int i = 0; i < numSurfaces; i++)
+			{
+				reader.BaseStream.Seek(96, SeekOrigin.Current); // each surface is 96 bytes
+			}
+
+			// Face Scroll Data (old format)
+			if (rfl_version <= 0xB4)
+			{
+				int numFaceScrollDataOld = reader.ReadInt32();
+				Logger.Debug(logSrc, $"numFaceScrollDataOld: {numFaceScrollDataOld}");
+				for (int i = 0; i < numFaceScrollDataOld; i++)
+				{
+					reader.BaseStream.Seek(12, SeekOrigin.Current);
+				}
+			}
+
+			solid.Flags = reader.ReadUInt32();
+			solid.Life = reader.ReadInt32();
+			solid.State = reader.ReadInt32();
+
+			Logger.Debug(logSrc, $"Parsed brush {brush.UID} with {brush.Vertices.Count} verticies, {brush.UVs.Count} faces, flags {brush.Solid.Flags}, life {brush.Solid.Life}, and state {brush.Solid.State}");
 
 			return brush;
 		}
