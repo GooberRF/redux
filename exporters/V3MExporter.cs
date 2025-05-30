@@ -1,11 +1,11 @@
-﻿using redux;
+﻿using redux.utilities;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
 
-namespace RFGConverter
+namespace redux.exporters
 {
 	public static class V3mExporter
 	{
@@ -80,7 +80,7 @@ namespace RFGConverter
 			// Build raw data block
 			using var ms = new MemoryStream();
 			using var dw = new BinaryWriter(ms);
-			void Align(int a) { long pad = (a - (dw.BaseStream.Position % a)) % a; if (pad > 0) dw.Write(new byte[pad]); }
+			void Align(int a) { long pad = (a - dw.BaseStream.Position % a) % a; if (pad > 0) dw.Write(new byte[pad]); }
 
 			// Batch headers
 			int texIdx = 0;

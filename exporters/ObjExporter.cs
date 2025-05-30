@@ -1,11 +1,12 @@
-﻿using System;
+﻿using redux.utilities;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Numerics;
 
-namespace redux
+namespace redux.exporters
 {
 	public static class ObjExporter
 	{
@@ -79,7 +80,7 @@ namespace redux
 						// world position
 						var p = Vector3.Transform(brush.Vertices[face.Vertices[i]], brush.RotationMatrix) + brush.Position;
 						// uv
-						var uv = (i < face.UVs.Count) ? face.UVs[i] : Vector2.Zero;
+						var uv = i < face.UVs.Count ? face.UVs[i] : Vector2.Zero;
 
 						// quantize
 						var key = (

@@ -1,9 +1,10 @@
-﻿using System;
+﻿using redux.utilities;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
 
-namespace redux
+namespace redux.parsers
 {
 	public static class RfgParser
 	{

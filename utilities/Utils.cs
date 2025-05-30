@@ -3,7 +3,7 @@ using System.Numerics;
 using System.Reflection;
 using System.Text;
 
-namespace redux
+namespace redux.utilities
 {
 	public static class Config
 	{
@@ -84,7 +84,7 @@ namespace redux
 			}
 
 			byte[] data = reader.ReadBytes(length);
-			return System.Text.Encoding.ASCII.GetString(data);
+			return Encoding.ASCII.GetString(data);
 		}
 
 		public static string ReadVStringFixedLength(BinaryReader reader, long sectionEnd)
@@ -105,7 +105,7 @@ namespace redux
 			// actually consume exactly that many bytes
 			byte[] data = reader.ReadBytes(toSkip);
 
-			return System.Text.Encoding.ASCII.GetString(data);
+			return Encoding.ASCII.GetString(data);
 		}
 
 
@@ -119,6 +119,13 @@ namespace redux
 
 			writer.Write((ushort)bytes.Length);
 			writer.Write(bytes);
+		}
+
+		public enum EditorViewType : int
+		{
+			FreeLook = 0,
+			TopDown = 1,
+			SideView = 2
 		}
 	}
 

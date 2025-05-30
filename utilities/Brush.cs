@@ -1,8 +1,21 @@
 ﻿using System.Collections.Generic;
 using System.Numerics;
 
-namespace redux
-{
+namespace redux.utilities
+{	public class Mesh
+	{
+		public List<Brush> Brushes { get; set; } = new List<Brush>();
+		public List<Light> Lights { get; } = new List<Light>();
+		public List<RoomEffect> RoomEffects { get; } = new();
+		public List<MpRespawnPoint> MPRespawnPoints { get; } = new();
+		public List<RflEvent> Events { get; } = new();
+		public List<PushRegion> PushRegions { get; } = new();
+		public List<Trigger> Triggers { get; } = new();
+		public List<RflItem> Items { get; } = new();
+		public List<ClimbingRegion> ClimbingRegions { get; } = new();
+		public List<ParticleEmitter> ParticleEmitters { get; } = new();
+	}
+
 	public class Brush
 	{
 		public int UID { get; set; }
@@ -182,6 +195,11 @@ namespace redux
 		public string Str2 { get; set; }
 		public List<int> Links { get; set; }
 		public uint RawColor { get; set; }
+		// RF2 exclusive below
+		public Dictionary<string, object> Properties { get; set; }
+		public byte[] ParameterBlob { get; set; }
+		public List<object> Parameters { get; set; }
+
 	}
 
 	public enum PushRegionShape { Sphere = 1, AxisAlignedBox = 2, OrientedBox = 3 }
@@ -256,5 +274,71 @@ namespace redux
 		public int Count { get; set; }
 		public int RespawnTime { get; set; }
 		public int TeamID { get; set; }
+	}
+
+	public class ClimbingRegion
+	{
+		public int UID;
+		public string ClassName;
+		public Vector3 Position;
+		public Matrix4x4 Rotation;
+		public string ScriptName;
+		public bool HiddenInEditor;
+		public int Type;
+		public Vector3 Extents;
+	}
+
+	public enum ParticleEmitterShape
+	{
+		Sphere = 0,
+		Plane = 1,
+		// Add other shape enums as needed
+	}
+
+	public class ParticleEmitter
+	{
+		public int UID { get; set; }
+		public string ClassName { get; set; }
+		public Vector3 Position { get; set; }
+		public Matrix4x4 Rotation { get; set; }
+		public string ScriptName { get; set; }
+		public bool HiddenInEditor { get; set; }
+
+		public ParticleEmitterShape Shape { get; set; }
+		public float SphereRadius { get; set; }
+		public float PlaneWidth { get; set; }
+		public float PlaneDepth { get; set; }
+
+		public string Texture { get; set; }
+		public float SpawnDelay { get; set; }
+		public float SpawnRandomize { get; set; }
+		public float Velocity { get; set; }
+		public float VelocityRandomize { get; set; }
+		public float Acceleration { get; set; }
+		public float Decay { get; set; }
+		public float DecayRandomize { get; set; }
+		public float ParticleRadius { get; set; }
+		public float ParticleRadiusRandomize { get; set; }
+		public float GrowthRate { get; set; }
+		public float GravityMultiplier { get; set; }
+		public float RandomDirection { get; set; }
+
+		public Vector4 ParticleColor { get; set; }
+		public Vector4 FadeToColor { get; set; }
+
+		public uint EmitterFlags { get; set; }
+		public ushort ParticleFlags { get; set; }
+
+		public byte Stickiness { get; set; }
+		public byte Bounciness { get; set; }
+		public byte PushEffect { get; set; }
+		public byte Swirliness { get; set; }
+
+		public bool InitiallyOn { get; set; }
+		public float TimeOn { get; set; }
+		public float TimeOnRandomize { get; set; }
+		public float TimeOff { get; set; }
+		public float TimeOffRandomize { get; set; }
+		public float ActiveDistance { get; set; }
 	}
 }

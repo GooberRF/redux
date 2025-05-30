@@ -1,9 +1,10 @@
-﻿using System;
+﻿using redux.utilities;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
 
-namespace redux
+namespace redux.exporters
 {
 	public static class RfgExporter
 	{
@@ -11,6 +12,8 @@ namespace redux
 
 		public static void ExportRfg(Mesh mesh, string outputPath)
 		{
+			Logger.Info(logSrc, $"Writing RFG to {outputPath}");
+			
 			using var stream = File.Create(outputPath);
 			using var writer = new BinaryWriter(stream);
 
@@ -24,6 +27,7 @@ namespace redux
 
 
 			// Write brushes section
+			Logger.Dev(logSrc, $"Writing brushes section: count={mesh.Brushes.Count}");
 			writer.Write(mesh.Brushes.Count);
 			foreach (var brush in mesh.Brushes)
 			{
@@ -38,7 +42,7 @@ namespace redux
 				if ((flags & 0x40) != 0) flagDescriptions.Add("unk_40");
 				if ((flags & 0x200) != 0) flagDescriptions.Add("unk_200");
 				string flagsSummary = flagDescriptions.Count > 0 ? string.Join(", ", flagDescriptions) : "none";
-				Logger.Debug(logSrc, $"Writing brush {brush.UID}, with life {brush.Solid.Life}, state {brush.Solid.State}, and flags 0x{flags:X8} ({flagsSummary})");
+				Logger.Dev(logSrc, $"  → brush UID={brush.UID}, verts={brush.Vertices.Count}, faces={brush.Solid.Faces.Count}, life={brush.Solid.Life}, flags=0x{flags:X8} ({flagsSummary})");
 
 				writer.Write(brush.UID);
 				writer.Write(brush.Position.X);
@@ -70,6 +74,7 @@ namespace redux
 					var newFace = new Face
 					{
 						TextureIndex = face.TextureIndex,
+						FaceFlags = face.FaceFlags,
 						Vertices = new List<int>(),
 						UVs = new List<Vector2>()
 					};
@@ -80,7 +85,7 @@ namespace redux
 						var pos = brush.Vertices[posIndex];
 
 						// Gracefully handle missing UVs (if corrupted input)
-						var uv = (i < face.UVs.Count) ? face.UVs[i] : Vector2.Zero;
+						var uv = i < face.UVs.Count ? face.UVs[i] : Vector2.Zero;
 
 						var key = ((int)(pos.X * 1000), (int)(pos.Y * 1000), (int)(pos.Z * 1000));
 						if (!vertMap.TryGetValue(key, out int vertIdx))
@@ -124,8 +129,16 @@ namespace redux
 					float dist = -Vector3.Dot(normal, origin);
 
 					writer.Write(normal.X); writer.Write(normal.Y); writer.Write(normal.Z); writer.Write(dist);
-					writer.Write(face.TextureIndex); writer.Write(-1); writer.Write(-1); writer.Write(-1); writer.Write(-1);
-					writer.Write(0); writer.Write((ushort)256); writer.Write((ushort)0); writer.Write(0); writer.Write(-1);
+					writer.Write(face.TextureIndex);
+					writer.Write(-1);
+					writer.Write(-1);
+					writer.Write(-1);
+					writer.Write(-1);
+					writer.Write(0); // smoothing groups (zeroed)
+					writer.Write(face.FaceFlags); // face flags
+					writer.Write((ushort)0);
+					writer.Write(0);
+					writer.Write(-1); // room index
 					writer.Write(face.Vertices.Count);
 					for (int i = 0; i < face.Vertices.Count; i++)
 					{
@@ -174,9 +187,12 @@ namespace redux
 			writer.Write(0); // 0 geo regions
 
 			// Write lights section
+			Logger.Dev(logSrc, $"Writing lights: count={mesh.Lights.Count}");
 			writer.Write(mesh.Lights.Count);
 			foreach (var light in mesh.Lights)
 			{
+				Logger.Dev(logSrc, $"  → light UID={light.UID}, range={light.Range}, intensity={light.OnIntensity}");
+
 				// UID
 				writer.Write(light.UID);
 				// class name
@@ -235,8 +251,6 @@ namespace redux
 				writer.Write(light.OffIntensity);
 				writer.Write(light.OffTime);
 				writer.Write(light.OffTimeVariation);
-
-				Logger.Debug(logSrc, $"Added light {light.UID} with range {light.Range} and intensity {light.OnIntensity}");
 			}
 
 			writer.Write(0); // 0 cutscene cameras
@@ -244,9 +258,12 @@ namespace redux
 			writer.Write(0); // 0 ambient sounds
 
 			// Write events section
+			Logger.Dev(logSrc, $"Writing events: count={mesh.Events.Count}");
 			writer.Write(mesh.Events.Count);
 			foreach (var ev in mesh.Events)
 			{
+				Logger.Dev(logSrc, $"  → event UID={ev.UID}, type={ev.ClassName}");
+
 				// UID
 				writer.Write(ev.UID);
 
@@ -301,9 +318,12 @@ namespace redux
 			}
 
 			// Write MP respawn points section
+			Logger.Dev(logSrc, $"Writing MP respawn points: count={mesh.MPRespawnPoints.Count}");
 			writer.Write(mesh.MPRespawnPoints.Count);
 			foreach (var pt in mesh.MPRespawnPoints)
 			{
+				Logger.Dev(logSrc, $"  → MPSpawn UID={pt.UID}, Red={pt.RedTeam}, Blue={pt.BlueTeam}, Bot={pt.IsBot}");
+
 				// UID
 				writer.Write(pt.UID);
 
@@ -331,17 +351,18 @@ namespace redux
 				writer.Write((byte)(pt.RedTeam ? 1 : 0));
 				writer.Write((byte)(pt.BlueTeam ? 1 : 0));
 				writer.Write((byte)(pt.IsBot ? 1 : 0));
-
-				Logger.Debug(logSrc, $"Added MP spawn {pt.UID} (R?{pt.RedTeam}/B?{pt.BlueTeam})");
 			}
 
 			writer.Write(0); // 0 nav points
 			writer.Write(0); // 0 entities
 
-			// Write triggers section
+			// Write items section
+			Logger.Dev(logSrc, $"Writing items: count={mesh.Items.Count}");
 			writer.Write(mesh.Items.Count);
 			foreach (var it in mesh.Items)
 			{
+				Logger.Dev(logSrc, $"  → item UID={it.UID}, class={it.ClassName}");
+
 				// UID
 				writer.Write(it.UID);
 
@@ -384,9 +405,12 @@ namespace redux
 			writer.Write(0); // 0 clutter
 
 			// Write triggers section
+			Logger.Dev(logSrc, $"Writing triggers: count={mesh.Triggers.Count}");
 			writer.Write(mesh.Triggers.Count);
 			foreach (var trg in mesh.Triggers)
 			{
+				Logger.Dev(logSrc, $"  → trigger UID={trg.UID}, shape={trg.Shape}");
+
 				// UID
 				writer.Write(trg.UID);
 
@@ -463,16 +487,61 @@ namespace redux
 			writer.Write(0); // 0 particle emitters
 			writer.Write(0); // 0 gas regions
 			writer.Write(0); // 0 decals
-			writer.Write(0); // 0 climbing regions
+
+			// Write climbing regions section
+			Logger.Dev(logSrc, $"Writing climbing regions: count={mesh.ClimbingRegions.Count}");
+			writer.Write(mesh.ClimbingRegions.Count);
+			foreach (var cr in mesh.ClimbingRegions)
+			{
+				Logger.Dev(logSrc, $"  → climb UID={cr.UID}, type={cr.Type}, extents={cr.Extents}");
+
+				// UID
+				writer.Write(cr.UID);
+
+				// class name
+				Utils.WriteVString(writer, cr.ClassName);
+
+				// position
+				writer.Write(cr.Position.X);
+				writer.Write(cr.Position.Y);
+				writer.Write(cr.Position.Z);
+
+				// 3×3 rotation (forward, right, up)
+				var R = cr.Rotation;
+				// forward = third row
+				writer.Write(R.M31); writer.Write(R.M32); writer.Write(R.M33);
+				// right   = first row
+				writer.Write(R.M11); writer.Write(R.M12); writer.Write(R.M13);
+				// up      = second row
+				writer.Write(R.M21); writer.Write(R.M22); writer.Write(R.M23);
+
+				// script name
+				Utils.WriteVString(writer, cr.ScriptName);
+
+				// hidden flag
+				writer.Write((byte)(cr.HiddenInEditor ? 1 : 0));
+
+				// region type
+				writer.Write(cr.Type);
+
+				// extents
+				writer.Write(cr.Extents.X);
+				writer.Write(cr.Extents.Y);
+				writer.Write(cr.Extents.Z);
+			}
+
 			writer.Write(0); // 0 room effects
 			writer.Write(0); // 0 eax effects
 			writer.Write(0); // 0 bolt emitters
 			writer.Write(0); // 0 targets
 
 			// Write push regions section
+			Logger.Dev(logSrc, $"Writing push regions: count={mesh.PushRegions.Count}");
 			writer.Write(mesh.PushRegions.Count);
 			foreach (var pr in mesh.PushRegions)
 			{
+				Logger.Dev(logSrc, $"  → push UID={pr.UID}, strength={pr.Strength}");
+
 				// UID
 				writer.Write(pr.UID);
 

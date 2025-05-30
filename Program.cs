@@ -1,5 +1,6 @@
-﻿using redux;
-using RFGConverter;
+﻿using redux.exporters;
+using redux.parsers;
+using redux.utilities;
 using System;
 using System.IO;
 
@@ -36,6 +37,7 @@ namespace redux
 				Console.WriteLine();
 				Console.WriteLine("Supported output formats:");
 				Console.WriteLine("  RF Group (.rfg)         Brushes with flags (air, portal, detail, etc.)");
+				Console.WriteLine("  RF Static Mesh (.v3m)   Mesh with submeshes for each brush");
 				Console.WriteLine("  Wavefront OBJ (.obj)    Geometry objects with flags in object names");
 				Console.WriteLine();
 				Console.WriteLine("Options:");
