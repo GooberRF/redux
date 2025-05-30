@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
 
-namespace RFGConverter
+namespace redux
 {
 	public static class RfgParser
 	{

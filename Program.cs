@@ -1,8 +1,9 @@
 ﻿using redux;
+using RFGConverter;
 using System;
 using System.IO;
 
-namespace RFGConverter
+namespace redux
 {
 	class Program
 	{
@@ -39,7 +40,8 @@ namespace RFGConverter
 				Console.WriteLine();
 				Console.WriteLine("Options:");
 				Console.WriteLine("  -help, -ver, -h, -v     Show this help message.");
-				Console.WriteLine("  -loglevel <level>       Set log message verbosity. Accepts: debug (0), info (1), warn (2), error (3). Default: info");
+				Console.WriteLine("  -loglevel <level>       Set log message verbosity. Accepts: debug (0), dev (1), info (2), warn (3), error (4). Default: info");
+				Console.WriteLine("  -swapitem <class>       If set, overwrite all item classes in exported RFGs with the specified item class.");
 				Console.WriteLine("  -ngons <bool>           Allow n-sided polygons. If false, triangulate all polygons. Default: false");
 				Console.WriteLine("  -textranslate <bool>    Enable RF2 → RF1 texture name translation. If false, keep original RF2 filenames. Default: false");
 				Console.WriteLine("  -brushes <bool>         Export brush data from RFL. If false, exports static geometry. Default: false");
@@ -74,11 +76,16 @@ namespace RFGConverter
 					Config.Verbosity = levelStr switch
 					{
 						"debug" or "0" => Config.LogLevel.Debug,
-						"info" or "1" => Config.LogLevel.Info,
-						"warn" or "2" => Config.LogLevel.Warn,
-						"error" or "3" => Config.LogLevel.Error,
+						"dev" or "1" => Config.LogLevel.Dev,
+						"info" or "2" => Config.LogLevel.Info,
+						"warn" or "3" => Config.LogLevel.Warn,
+						"error" or "4" => Config.LogLevel.Error,
 						_ => Config.LogLevel.Info
 					};
+				}
+				else if (args[i].Equals("-swapitem", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+				{
+					Config.ReplacementItemName = args[++i];
 				}
 				else
 				{
@@ -166,6 +173,12 @@ namespace RFGConverter
 				Logger.Info(logSrc, $"Converting RFG -> OBJ: {inputFile} -> {outputFile}");
 				var mesh = RfgParser.ReadRfg(inputFile);
 				ObjExporter.ExportObj(mesh, outputFile);
+			}
+			else if (inputFile.EndsWith(".rfg", StringComparison.OrdinalIgnoreCase) && outputFile.EndsWith(".v3m", StringComparison.OrdinalIgnoreCase))
+			{
+				Logger.Info(logSrc, $"Converting RFG -> V3M: {inputFile} -> {outputFile}");
+				var mesh = RfgParser.ReadRfg(inputFile);
+				V3mExporter.ExportV3m(mesh, outputFile);
 			}
 			else if (inputFile.EndsWith(".rfg", StringComparison.OrdinalIgnoreCase) && outputFile.EndsWith(".rfg", StringComparison.OrdinalIgnoreCase))
 			{

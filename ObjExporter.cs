@@ -5,7 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Numerics;
 
-namespace RFGConverter
+namespace redux
 {
 	public static class ObjExporter
 	{
@@ -138,6 +138,7 @@ namespace RFGConverter
 					obj.WriteLine($"usemtl {mat}");
 					foreach (var face in kv.Value)
 					{
+						face.Reverse(); // correct normals before writing
 						var faceTokens = face
 							.Select(t => $"{t.vi + vOffset}/{t.vti + vtOffset}/{t.vni + vnOffset}")
 							.ToArray();

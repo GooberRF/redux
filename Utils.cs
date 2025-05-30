@@ -3,7 +3,7 @@ using System.Numerics;
 using System.Reflection;
 using System.Text;
 
-namespace RFGConverter
+namespace redux
 {
 	public static class Config
 	{
@@ -18,9 +18,11 @@ namespace RFGConverter
 		public static bool TriangulatePolygons { get; set; } = true;
 		public static bool TranslateRF2Textures { get; set; } = false;
 		public static bool SetRF2GeoableNonDetail { get; set; } = false;
+		public static string ReplacementItemName { get; set; } = "";
 		public enum LogLevel
 		{
 			Debug,
+			Dev,
 			Info,
 			Warn,
 			Error
@@ -54,6 +56,7 @@ namespace RFGConverter
 		}
 
 		public static void Debug(string source, string message) => Log(Config.LogLevel.Debug, source, message);
+		public static void Dev(string source, string message) => Log(Config.LogLevel.Dev, source, message);
 		public static void Info(string source, string message) => Log(Config.LogLevel.Info, source, message);
 		public static void Warn(string source, string message) => Log(Config.LogLevel.Warn, source, message);
 		public static void Error(string source, string message) => Log(Config.LogLevel.Error, source, message);
@@ -71,7 +74,7 @@ namespace RFGConverter
 
 			ushort length = reader.ReadUInt16();
 
-			if (length == 0)
+			if (length == 0 || length == 0xFFFF)
 				return string.Empty;
 
 			if (reader.BaseStream.Position + length > reader.BaseStream.Length)
@@ -83,6 +86,28 @@ namespace RFGConverter
 			byte[] data = reader.ReadBytes(length);
 			return System.Text.Encoding.ASCII.GetString(data);
 		}
+
+		public static string ReadVStringFixedLength(BinaryReader reader, long sectionEnd)
+		{
+			// read the 2‑byte length prefix
+			if (reader.BaseStream.Position + 2 > reader.BaseStream.Length)
+				return string.Empty;
+			ushort length = reader.ReadUInt16();
+
+			// 0 or 0xFFFF → no string data, just skip nothing
+			if (length == 0 || length == 0xFFFF)
+				return string.Empty;
+
+			// figure out how many bytes *we can* safely skip
+			long remainingInSection = sectionEnd - reader.BaseStream.Position;
+			int toSkip = (int)Math.Min(length, Math.Max(0, remainingInSection));
+
+			// actually consume exactly that many bytes
+			byte[] data = reader.ReadBytes(toSkip);
+
+			return System.Text.Encoding.ASCII.GetString(data);
+		}
+
 
 		public static void WriteVString(BinaryWriter writer, string str)
 		{

@@ -5,7 +5,7 @@ using System.Numerics;
 using static System.Collections.Specialized.BitVector32;
 using static System.Net.Mime.MediaTypeNames;
 
-namespace RFGConverter
+namespace redux
 {
 	public static class RflParser
 	{
@@ -32,8 +32,8 @@ namespace RFGConverter
 
 			// What version of RFL is this?
 			bool isAlpine = version >= 0x12C;
-			bool isRF1 = version <= 0xC8 || isAlpine;	// <= 201 or >= 300
-			bool isRF2 = version == 0x127;						// 295
+			bool isRF1 = version <= 0xC8 || isAlpine;   // <= 201 or >= 300
+			bool isRF2 = version == 0x127;                      // 295
 
 			string levelName = Utils.ReadVString(reader);
 			string modName = "";
@@ -74,64 +74,631 @@ namespace RFGConverter
 
 			// Read sections
 			for (int i = 0; i < numSections; i++)
+			{
+				long sectionHeaderPos = reader.BaseStream.Position;
+
+				if (reader.BaseStream.Position + 8 > reader.BaseStream.Length)
 				{
-					long sectionHeaderPos = reader.BaseStream.Position;
+					Logger.Warn(logSrc, $"Reached EOF unexpectedly while reading section header {i}.");
+					break;
+				}
 
-					if (reader.BaseStream.Position + 8 > reader.BaseStream.Length)
-					{
-						Logger.Warn(logSrc, $"Reached EOF unexpectedly while reading section header {i}.");
-						break;
-					}
+				int sectionType = reader.ReadInt32();
+				int sectionSize = reader.ReadInt32();
+				long sectionStart = reader.BaseStream.Position;
+				long sectionEnd = sectionStart + sectionSize;
 
-					int sectionType = reader.ReadInt32();
-					int sectionSize = reader.ReadInt32();
-					long sectionStart = reader.BaseStream.Position;
-					long sectionEnd = sectionStart + sectionSize;
+				Logger.Debug(logSrc, $"Section {i}: Type 0x{sectionType:X}, Size {sectionSize} at 0x{sectionHeaderPos:X}");
 
-					Logger.Debug(logSrc, $"Section {i}: Type 0x{sectionType:X}, Size {sectionSize} at 0x{sectionHeaderPos:X}");
+				if (sectionEnd > reader.BaseStream.Length)
+				{
+					Logger.Warn(logSrc, $"Section {i} exceeds file length. Skipping.");
+					break;
+				}
 
-					if (sectionEnd > reader.BaseStream.Length)
+				if (sectionType == 0x100 && !Config.ParseBrushSectionInstead) // static geometry
+				{
+					Logger.Debug(logSrc, "Found static geometry section (0x100). Parsing...");
+					Brush brush = isRF2
+						? RflStaticGeometryParser.ParseStaticGeometryFromRF2Rfl(reader, sectionEnd)
+						: RflStaticGeometryParser.ParseStaticGeometryFromRF1Rfl(reader, sectionEnd, version);
+					reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
+					mesh.Brushes.Add(brush);
+				}
+				else if (sectionType == 0x02000000 && Config.ParseBrushSectionInstead) // brushes
+				{
+					Logger.Debug(logSrc, "Found brush geometry section (0x02000000). Parsing...");
+					if (isRF2)
 					{
-						Logger.Warn(logSrc, $"Section {i} exceeds file length. Skipping.");
-						break;
-					}
-
-					if (sectionType == 0x100 && !Config.ParseBrushSectionInstead) // Static Geometry section
-					{
-						Logger.Debug(logSrc, "Found static geometry section (0x100). Parsing...");
-						Brush brush = isRF2
-							? RflStaticGeometryParser.ParseStaticGeometryFromRF2Rfl(reader, sectionEnd)
-							: RflStaticGeometryParser.ParseStaticGeometryFromRF1Rfl(reader, sectionEnd, version);
-						reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
-						mesh.Brushes.Add(brush);
-					}
-					else if (sectionType == 0x02000000 && Config.ParseBrushSectionInstead) // Brush section
-					{
-						Logger.Debug(logSrc, "Found brush geometry section (0x02000000). Parsing...");
-						if (isRF2)
-						{
-							RflBrushParser.ParseBrushesFromRF2Rfl(reader, sectionEnd, mesh);
-						}
-						else
-						{
-							RflBrushParser.ParseBrushesFromRF1Rfl(reader, sectionEnd, mesh, version);
-						}
-					}
-					else if (sectionType == 0x0)
-					{
-						// once we've reached section type 0 we can stop reading further sections
-						// rf2 rfls have a section 0 at the end for some reason. rf1 rfls do not
-						break;
+						RflBrushParser.ParseBrushesFromRF2Rfl(reader, sectionEnd, mesh);
 					}
 					else
 					{
-						reader.BaseStream.Seek(sectionSize, SeekOrigin.Current); // Skip unknown section
+						RflBrushParser.ParseBrushesFromRF1Rfl(reader, sectionEnd, mesh, version);
 					}
 				}
+				else if (sectionType == 0x00000300) // lights 
+				{
+					Logger.Debug(logSrc, "Found lights section (0x00000300). Parsing...");
+					mesh.Lights.AddRange(RflLightParser.ParseLightsFromRfl(reader, sectionEnd, version));
+					reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
+
+				}
+				else if (sectionType == 0x0900) // level_properties
+				{
+					Logger.Debug(logSrc, "Found level_properties section (0x0900). Parsing...");
+					RflLevelPropertiesParser.ParseLevelPropertiesFromRfl(reader);
+					reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
+				}
+				else if (sectionType == 0x00000700) // mp_respawn_points
+				{
+					Logger.Debug(logSrc, "Found mp_respawn_points section (0x700). Parsing...");
+					mesh.MPRespawnPoints.AddRange(RflMpRespawnPointParser.ParseMpRespawnPoints(reader, sectionEnd));
+					reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
+				}
+				else if (sectionType == 0x00000600) // events
+				{
+					Logger.Debug(logSrc, "Found events section (0x600). Parsing...");
+					mesh.Events.AddRange(RflEventParser.ParseEvents(reader, sectionEnd, version));
+					reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
+				}
+				else if (sectionType == 0x00001100) // push_regions
+				{
+					Logger.Debug(logSrc, "Found push_regions section (0x00001100). Parsing...");
+					mesh.PushRegions.AddRange(RflPushRegionParser.ParsePushRegionsFromRfl(reader, sectionEnd));
+					reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
+				}
+				else if (sectionType == 0x00060000) // triggers
+				{
+					Logger.Debug(logSrc, "Found triggers section (0x00060000). Parsing...");
+					mesh.Triggers.AddRange(RflTriggerParser.ParseTriggersFromRfl(reader, sectionEnd, version));
+					reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
+				}
+				else if (sectionType == 0x00040000) // items
+				{
+					Logger.Debug(logSrc, "Found items section (0x00040000). Parsing...");
+					mesh.Items.AddRange(RflItemParser.ParseItemsFromRfl(reader, sectionEnd, version));
+					reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
+				}
+				else if (sectionType == 0x0) // end section
+				{
+					// once we've reached section type 0 we can stop reading further sections
+					// rf2 rfls have a section 0 at the end for some reason. rf1 rfls do not
+					break;
+				}
+				else
+				{
+					reader.BaseStream.Seek(sectionSize, SeekOrigin.Current); // Skip unknown section
+				}
+			}
 
 			return mesh;
 		}
 	}
+
+	public static class RflItemParser
+	{
+		private const string logSrc = "RflItemParser";
+
+		public static List<RflItem> ParseItemsFromRfl(BinaryReader reader, long sectionEnd, int rfl_version)
+		{
+			var items = new List<RflItem>();
+			int count = reader.ReadInt32();
+			Logger.Dev(logSrc, $"Reading {count} items…");
+
+			for (int i = 0; i < count; i++)
+			{
+				var it = new RflItem();
+
+				it.UID = reader.ReadInt32();
+				Logger.Dev(logSrc, $"Item[{i}] UID = {it.UID}");
+
+				it.ClassName = Utils.ReadVString(reader);
+				Logger.Dev(logSrc, $"Item[{i}] ClassName = \"{it.ClassName}\"");
+
+				it.Position = new Vector3(
+					reader.ReadSingle(),
+					reader.ReadSingle(),
+					reader.ReadSingle()
+				);
+				Logger.Dev(logSrc, $"Item[{i}] Position = {it.Position}");
+
+				// 3×3 rotation matrix → Matrix4x4
+				var m00 = reader.ReadSingle(); var m01 = reader.ReadSingle(); var m02 = reader.ReadSingle();
+				var m10 = reader.ReadSingle(); var m11 = reader.ReadSingle(); var m12 = reader.ReadSingle();
+				var m20 = reader.ReadSingle(); var m21 = reader.ReadSingle(); var m22 = reader.ReadSingle();
+				it.Rotation = new Matrix4x4(
+					m00, m01, m02, 0,
+					m10, m11, m12, 0,
+					m20, m21, m22, 0,
+					0, 0, 0, 1
+				);
+				Logger.Dev(logSrc, $"Item[{i}] Rotation = {it.Rotation}");
+
+				it.ScriptName = Utils.ReadVString(reader);
+				Logger.Dev(logSrc, $"Item[{i}] ScriptName = \"{it.ScriptName}\"");
+
+				it.HiddenInEditor = reader.ReadByte() != 0;
+				Logger.Dev(logSrc, $"Item[{i}] HiddenInEditor = {it.HiddenInEditor}");
+
+				it.Count = reader.ReadInt32();
+				Logger.Dev(logSrc, $"Item[{i}] Count = {it.Count}");
+
+				it.RespawnTime = reader.ReadInt32();
+				Logger.Dev(logSrc, $"Item[{i}] RespawnTime = {it.RespawnTime}");
+
+				it.TeamID = reader.ReadInt32();
+				Logger.Dev(logSrc, $"Item[{i}] TeamID = {it.TeamID}");
+
+				// unknown bytes, found only in RF2 rfls
+				// 255, 255, 255, 255, 0, 0 in every instance I have found
+				if (rfl_version == 0x127)
+				{
+					var unk1 = reader.ReadByte();
+					var unk2 = reader.ReadByte();
+					var unk3 = reader.ReadByte();
+					var unk4 = reader.ReadByte();
+					var unk5 = reader.ReadByte();
+					var unk6 = reader.ReadByte();
+					Logger.Dev(logSrc, $"unk RF2-specific bytes {unk1}, {unk2}, {unk3}, {unk4}, {unk5}, {unk6}");
+				}
+
+				items.Add(it);
+			}
+
+			return items;
+		}
+	}
+	public static class RflTriggerParser
+	{
+		private const string logSrc = "RflTriggerParser";
+
+		public static List<Trigger> ParseTriggersFromRfl(BinaryReader reader, long sectionEnd, int rfl_version)
+		{
+			if (rfl_version == 0x127) // 295
+			{
+				Logger.Warn(logSrc, "RFL version 0x127 (295) is not yet supported for trigger parsing. Skipping triggers.");
+				return new List<Trigger>();
+			}
+
+			var list = new List<Trigger>();
+			int count = reader.ReadInt32();
+			Logger.Dev(logSrc, $"Reading {count} triggers…");
+
+			for (int i = 0; i < count; i++)
+			{
+				var t = new Trigger();
+				t.UID = reader.ReadInt32();
+				t.ScriptName = Utils.ReadVString(reader);
+				t.HiddenInEditor = reader.ReadByte() != 0;
+				t.Shape = (TriggerShape)reader.ReadInt32();
+				t.ResetsAfter = reader.ReadSingle();
+				t.ResetsTimes = reader.ReadInt32();
+				t.UseKeyRequired = reader.ReadByte() != 0;
+				t.KeyName = Utils.ReadVString(reader);
+				t.WeaponActivates = reader.ReadByte() != 0;
+				t.ActivatedBy = (TriggerActivatedBy)reader.ReadByte();
+				t.IsNpc = reader.ReadByte() != 0;
+				t.IsAuto = reader.ReadByte() != 0;
+				t.InVehicle = reader.ReadByte() != 0;
+
+				// position
+				t.Position = new Vector3(
+					reader.ReadSingle(),
+					reader.ReadSingle(),
+					reader.ReadSingle()
+				);
+
+				if (t.Shape == TriggerShape.Sphere)
+				{
+					t.SphereRadius = reader.ReadSingle();
+				}
+				else
+				{
+					// oriented/axis‐aligned box
+					// rotation
+					float m00 = reader.ReadSingle(), m01 = reader.ReadSingle(), m02 = reader.ReadSingle();
+					float m10 = reader.ReadSingle(), m11 = reader.ReadSingle(), m12 = reader.ReadSingle();
+					float m20 = reader.ReadSingle(), m21 = reader.ReadSingle(), m22 = reader.ReadSingle();
+					t.Rotation = new Matrix4x4(
+						m00, m01, m02, 0,
+						m10, m11, m12, 0,
+						m20, m21, m22, 0,
+						0, 0, 0, 1
+					);
+
+					// box extents
+					t.BoxHeight = reader.ReadSingle();
+					t.BoxWidth = reader.ReadSingle();
+					t.BoxDepth = reader.ReadSingle();
+
+					t.OneWay = reader.ReadByte() != 0;
+				}
+
+				t.AirlockRoomUID = reader.ReadInt32();
+				t.AttachedToUID = reader.ReadInt32();
+				t.UseClutterUID = reader.ReadInt32();
+				t.Disabled = reader.ReadByte() != 0;
+
+				t.ButtonActiveTime = reader.ReadSingle();
+				t.InsideTime = reader.ReadSingle();
+
+				if (rfl_version >= 0xB1)
+					t.Team = (TriggerTeam)reader.ReadInt32();
+
+				// links
+				int numLinks = reader.ReadInt32();
+				t.Links = new List<int>(numLinks);
+				for (int j = 0; j < numLinks; j++)
+					t.Links.Add(reader.ReadInt32());
+
+				Logger.Debug(logSrc,
+					$"Trigger[{i}] UID={t.UID}, Script=\"{t.ScriptName}\", Hidden={t.HiddenInEditor}, " +
+					$"Shape={t.Shape}, ResetsAfter={t.ResetsAfter}, ResetsTimes={t.ResetsTimes}, " +
+					$"UseKey={t.UseKeyRequired}, Key=\"{t.KeyName}\", WeaponActivates={t.WeaponActivates}, " +
+					$"ActivatedBy={t.ActivatedBy}, IsNpc={t.IsNpc}, IsAuto={t.IsAuto}, InVehicle={t.InVehicle}, " +
+					$"Pos={t.Position}, " +
+					(t.Shape == TriggerShape.Sphere
+						? $"Radius={t.SphereRadius}"
+						: $"Rot={t.Rotation}, HxWxD=({t.BoxHeight},{t.BoxWidth},{t.BoxDepth}), OneWay={t.OneWay}"
+					) +
+					$", AirlockUID={t.AirlockRoomUID}, AttachedUID={t.AttachedToUID}, UseClutterUID={t.UseClutterUID}, " +
+					$"Disabled={t.Disabled}, BtnTime={t.ButtonActiveTime}, InsideTime={t.InsideTime}, Team={t.Team}, " +
+					$"Links=[{string.Join(",", t.Links)}]"
+				);
+
+				list.Add(t);
+			}
+
+			return list;
+		}
+	}
+
+	public static class RflPushRegionParser
+	{
+		private const string logSrc = "RflPushRegionParser";
+
+		public static List<PushRegion> ParsePushRegionsFromRfl(BinaryReader reader, long sectionEnd)
+		{
+			var regions = new List<PushRegion>();
+			int count = reader.ReadInt32();
+			Logger.Dev(logSrc, $"Reading {count} push regions…");
+
+			for (int i = 0; i < count; i++)
+			{
+				var pr = new PushRegion();
+
+				pr.UID = reader.ReadInt32();
+				pr.ClassName = Utils.ReadVString(reader);
+				pr.Position = new Vector3(
+					reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()
+				);
+
+				// rotation matrix
+				float r00 = reader.ReadSingle(), r01 = reader.ReadSingle(), r02 = reader.ReadSingle();
+				float r10 = reader.ReadSingle(), r11 = reader.ReadSingle(), r12 = reader.ReadSingle();
+				float r20 = reader.ReadSingle(), r21 = reader.ReadSingle(), r22 = reader.ReadSingle();
+				pr.Rotation = new Matrix4x4(
+					r00, r01, r02, 0,
+					r10, r11, r12, 0,
+					r20, r21, r22, 0,
+					0, 0, 0, 1
+				);
+
+				pr.ScriptName = Utils.ReadVString(reader);
+				pr.HiddenInEditor = reader.ReadByte() != 0;
+
+				pr.Shape = (PushRegionShape)reader.ReadInt32();
+				if (pr.Shape == PushRegionShape.Sphere)
+				{
+					pr.Radius = reader.ReadSingle();
+				}
+				else
+				{
+					// extents = Vector3
+					pr.Extents = new Vector3(
+						reader.ReadSingle(),
+						reader.ReadSingle(),
+						reader.ReadSingle()
+					);
+				}
+
+				pr.Strength = reader.ReadSingle();
+
+				// flags bitfield
+				uint rawFlags = reader.ReadUInt16(); // 16 bits
+				pr.JumpPad = (rawFlags & 0x40) != 0;
+				pr.DoesntAffectPlayer = (rawFlags & 0x20) != 0;
+				pr.Radial = (rawFlags & 0x10) != 0;
+				pr.GrowsTowardsBoundary = (rawFlags & 0x08) != 0;
+				pr.GrowsTowardsCenter = (rawFlags & 0x04) != 0;
+				pr.Grounded = (rawFlags & 0x02) != 0;
+				pr.MassIndependent = (rawFlags & 0x01) != 0;
+
+				pr.Turbulence = reader.ReadUInt16();
+
+				// log out everything
+				Logger.Debug(logSrc,
+					$"PushRegion[{i}] UID={pr.UID}, Class=\"{pr.ClassName}\", Pos={pr.Position}, " +
+					$"Script=\"{pr.ScriptName}\", Hidden={pr.HiddenInEditor}, Shape={pr.Shape}, " +
+					(pr.Shape == PushRegionShape.Sphere
+						? $"Radius={pr.Radius}"
+						: $"Extents={pr.Extents}"
+					) +
+					$", Strength={pr.Strength}, Flags=0x{rawFlags:X4} (JumpPad={pr.JumpPad}, " +
+					$"NoPlayer={pr.DoesntAffectPlayer}, Radial={pr.Radial}, " +
+					$"BoundaryGrow={pr.GrowsTowardsBoundary}, CenterGrow={pr.GrowsTowardsCenter}, " +
+					$"Grounded={pr.Grounded}, MassIndep={pr.MassIndependent}), Turbulence={pr.Turbulence}"
+				);
+
+				regions.Add(pr);
+			}
+
+			return regions;
+		}
+	}
+
+	public static class RflEventParser
+	{
+		private const string logSrc = "RflEventParser";
+
+		public static List<RflEvent> ParseEvents(BinaryReader reader, long sectionEnd, int rfl_version)
+		{
+			if (rfl_version == 0x127) // 295
+			{
+				Logger.Warn(logSrc, "RFL version 0x127 (295) is not yet supported for event parsing. Skipping events.");
+				return new List<RflEvent>();
+			}
+
+			var events = new List<RflEvent>();
+			int count = reader.ReadInt32();
+			Logger.Dev(logSrc, $"Reading {count} events…");
+
+			for (int i = 0; i < count; i++)
+			{
+				var ev = new RflEvent();
+
+				ev.UID = reader.ReadInt32();
+				ev.ClassName = Utils.ReadVString(reader);
+				ev.Position = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+				ev.ScriptName = Utils.ReadVString(reader);
+				ev.HiddenInEditor = reader.ReadByte() != 0;				
+				ev.Delay = reader.ReadSingle();
+				ev.Bool1 = reader.ReadByte() != 0;
+				ev.Bool2 = reader.ReadByte() != 0;
+				ev.Int1 = reader.ReadInt32();
+				ev.Int2 = reader.ReadInt32();
+				ev.Float1 = reader.ReadSingle();
+				ev.Float2 = reader.ReadSingle();
+				ev.Str1 = Utils.ReadVString(reader);
+				ev.Str2 = Utils.ReadVString(reader);
+
+				// links (uid_list)				
+				int numLinks = reader.ReadInt32();
+				if (numLinks < 0 || reader.BaseStream.Position + numLinks * 4L > sectionEnd)
+				{
+					Logger.Warn(logSrc, $"Suspicious link count {numLinks} in event[{i}] – clamping to 0");
+					numLinks = 0;
+				}
+				ev.Links = new List<int>(numLinks);
+				for (int j = 0; j < numLinks; j++)
+					ev.Links.Add(reader.ReadInt32());
+
+				if ((rfl_version >= 0x91 && (ev.ClassName == "Teleport" || ev.ClassName == "Play_Vclip" || ev.ClassName == "Teleport_Player"))
+				|| (rfl_version >= 0x98 && ev.ClassName == "Alarm")
+				|| (rfl_version >= 0x12C && (ev.ClassName == "AF_Teleport_Player" || ev.ClassName == "Clone_Entity"))
+				|| (rfl_version >= 0x12D && ev.ClassName == "Anchor_Marker_Orient"))
+				{
+					ev.HasRotation = true; // used by exporter
+					float m00 = reader.ReadSingle(), m01 = reader.ReadSingle(), m02 = reader.ReadSingle();
+					float m10 = reader.ReadSingle(), m11 = reader.ReadSingle(), m12 = reader.ReadSingle();
+					float m20 = reader.ReadSingle(), m21 = reader.ReadSingle(), m22 = reader.ReadSingle();
+					ev.Rotation = new Matrix4x4(
+						m00, m01, m02, 0,
+						m10, m11, m12, 0,
+						m20, m21, m22, 0,
+						  0, 0, 0, 1
+					);
+				}
+
+				if (rfl_version >= 0xB0)
+				{
+					//reader.BaseStream.Seek(4, SeekOrigin.Current); // color
+					ev.RawColor = reader.ReadUInt32();
+					Logger.Dev(logSrc, $"Event[{i}] RawColor = 0x{ev.RawColor:X8}");
+				}
+
+				Logger.Dev(logSrc,
+					$"Event[{i}] UID={ev.UID}, Class=\"{ev.ClassName}\", Pos={ev.Position}, " +
+					$"Script=\"{ev.ScriptName}\", Hidden={ev.HiddenInEditor}, Delay={ev.Delay}, " +
+					$"Bool1={ev.Bool1}, Bool2={ev.Bool2}, Int1={ev.Int1}, Int2={ev.Int2}, " +
+					$"Float1={ev.Float1}, Float2={ev.Float2}, Str1=\"{ev.Str1}\", Str2=\"{ev.Str2}\", " +
+					$"Links=[{string.Join(", ", ev.Links)}]"
+				);
+
+				events.Add(ev);
+			}
+
+			// skip to end of this section
+			reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
+			return events;
+		}
+	}
+
+public static class RflMpRespawnPointParser
+	{
+		private const string logSrc = "RflMpRespawnPointParser";
+
+		public static List<MpRespawnPoint> ParseMpRespawnPoints(BinaryReader reader, long sectionEnd)
+		{
+			var list = new List<MpRespawnPoint>();
+			int count = reader.ReadInt32();
+			Logger.Dev(logSrc, $"Reading {count} MP respawn points…");
+
+			for (int i = 0; i < count; i++)
+			{
+				var pt = new MpRespawnPoint();
+				pt.UID = reader.ReadInt32();
+				pt.Position = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+
+				// 3×3 rotation matrix → embed into Matrix4x4
+				float m00 = reader.ReadSingle(), m01 = reader.ReadSingle(), m02 = reader.ReadSingle();
+				float m10 = reader.ReadSingle(), m11 = reader.ReadSingle(), m12 = reader.ReadSingle();
+				float m20 = reader.ReadSingle(), m21 = reader.ReadSingle(), m22 = reader.ReadSingle();
+				pt.Rotation = new Matrix4x4(
+					m00, m01, m02, 0,
+					m10, m11, m12, 0,
+					m20, m21, m22, 0,
+					0, 0, 0, 1
+				);
+
+				pt.ScriptName = Utils.ReadVString(reader);
+				pt.HiddenInEditor = reader.ReadByte() != 0;
+				pt.TeamID = reader.ReadInt32();
+				pt.RedTeam = reader.ReadByte() != 0;
+				pt.BlueTeam = reader.ReadByte() != 0;
+				pt.IsBot = reader.ReadByte() != 0;
+
+				// print everything
+				Logger.Dev(logSrc,
+					$"MP Respawn[{i}] UID={pt.UID}, Pos={pt.Position}, Team={pt.TeamID} (R?{pt.RedTeam}/B?{pt.BlueTeam}), " +
+					$"Bot={pt.IsBot}, Hidden={pt.HiddenInEditor}, Script=\"{pt.ScriptName}\""
+				);
+
+				list.Add(pt);
+			}
+
+			// ensure we skip to end of section
+			reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
+			return list;
+		}
+	}
+
+
+	public static class RflLevelPropertiesParser
+	{
+		private const string logSrc = "RflLevelPropertiesParser";
+
+		public static void ParseLevelPropertiesFromRfl(BinaryReader reader)
+		{
+			// geomod_texture
+			string geomodTexture = Utils.ReadVString(reader);
+			Logger.Dev(logSrc, $"geomod_texture: \"{geomodTexture}\"");
+
+			// hardness
+			int hardness = reader.ReadInt32();
+			Logger.Dev(logSrc, $"hardness: {hardness}");
+
+			// ambient_color (RGBA)
+			byte ambR = reader.ReadByte();
+			byte ambG = reader.ReadByte();
+			byte ambB = reader.ReadByte();
+			byte ambA = reader.ReadByte();
+			Logger.Dev(logSrc, $"ambient_color: R={ambR} G={ambG} B={ambB} A={ambA}");
+
+			// directional_ambient_light
+			byte dirAmbient = reader.ReadByte();
+			Logger.Dev(logSrc, $"directional_ambient_light: {(dirAmbient != 0 ? "yes" : "no")}");
+
+			// fog_color
+			byte fogR = reader.ReadByte();
+			byte fogG = reader.ReadByte();
+			byte fogB = reader.ReadByte();
+			byte fogA = reader.ReadByte();
+			Logger.Dev(logSrc, $"fog_color: R={fogR} G={fogG} B={fogB} A={fogA}");
+
+			// fog near/far planes
+			float fogNear = reader.ReadSingle();
+			float fogFar = reader.ReadSingle();
+			Logger.Dev(logSrc, $"fog_near_plane: {fogNear}");
+			Logger.Dev(logSrc, $"fog_far_plane:  {fogFar}");
+		}
+	}
+
+
+	static class RflLightParser
+	{
+		private const string logSrc = "RflLightParser";
+
+		public static List<Light> ParseLightsFromRfl(BinaryReader reader, long sectionEnd, int rfl_version)
+		{
+			var lights = new List<Light>();
+			int numLights = reader.ReadInt32();
+			Logger.Dev(logSrc, $"Reading {numLights} lights…");
+
+			for (int i = 0; i < numLights; i++)
+			{
+				var light = new Light();
+
+				light.UID = reader.ReadInt32();
+				light.ClassName = Utils.ReadVString(reader);
+				light.Position = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+
+				// 3×3 rotation matrix → embed into Matrix4x4
+				var m00 = reader.ReadSingle(); var m01 = reader.ReadSingle(); var m02 = reader.ReadSingle();
+				var m10 = reader.ReadSingle(); var m11 = reader.ReadSingle(); var m12 = reader.ReadSingle();
+				var m20 = reader.ReadSingle(); var m21 = reader.ReadSingle(); var m22 = reader.ReadSingle();
+				light.Rotation = new Matrix4x4(
+					m00, m01, m02, 0,
+					m10, m11, m12, 0,
+					m20, m21, m22, 0,
+					0, 0, 0, 1
+				);
+
+				light.ScriptName = Utils.ReadVString(reader);
+				light.HiddenInEditor = reader.ReadByte() != 0;
+
+				uint rawFlags = reader.ReadUInt32();
+				light.Dynamic = (rawFlags & 0x1) != 0;
+				light.Fade = (rawFlags & 0x2) != 0;
+				light.ShadowCasting = (rawFlags & 0x4) != 0;
+				light.IsEnabled = (rawFlags & 0x8) != 0;
+				light.Type = (LightType)((rawFlags >> 4) & 0x3);
+				light.InitialState = (LightState)((rawFlags >> 8) & 0xF);
+				light.RuntimeShadow = (rawFlags & 0x2000) != 0;
+
+				// RGBA
+				byte r = reader.ReadByte();
+				byte g = reader.ReadByte();
+				byte b = reader.ReadByte();
+				byte a = reader.ReadByte();
+				light.Color = new Vector4(r / 255f, g / 255f, b / 255f, a / 255f);
+
+				light.Range = reader.ReadSingle();
+				light.FOV = reader.ReadSingle();
+				light.FOVDropoff = reader.ReadSingle();
+				light.IntensityAtMaxRange = reader.ReadSingle();
+				light.DropoffType = reader.ReadInt32();
+				light.TubeLightWidth = reader.ReadSingle();
+
+				if (rfl_version != 0x127) // 295
+				{
+					light.OnIntensity = reader.ReadSingle();
+				}
+				else
+				{
+					float raw_intensity = reader.ReadSingle();
+					light.OnIntensity = raw_intensity * light.Range;
+				}
+				light.OnTime = reader.ReadSingle();
+				light.OnTimeVariation = reader.ReadSingle();
+				light.OffIntensity = reader.ReadSingle();
+				light.OffTime = reader.ReadSingle();
+				light.OffTimeVariation = reader.ReadSingle();
+
+				lights.Add(light);
+
+				// (we leave reader at end of this light record)
+				Logger.Dev(logSrc,
+					$"Loaded Light[{i}] UID={light.UID}, class={light.ClassName}, pos={light.Position}, " +
+					$"flags=0x{rawFlags:X8}, color={light.Color}, range={light.Range}, int={light.OnIntensity}, intmr={light.IntensityAtMaxRange}"
+				);
+			}
+
+			return lights;
+		}
+	}
+
 	public static class RflStaticGeometryParser
 	{
 		private const string logSrc = "RflGeomParser";
