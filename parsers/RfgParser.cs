@@ -1,4 +1,5 @@
-﻿using redux.utilities;
+﻿using redux.parsers.parser_utils;
+using redux.utilities;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -34,7 +35,7 @@ namespace redux.parsers
 					int numBrushes = reader.ReadInt32();
 					for (int b = 0; b < numBrushes; b++)
 					{
-						Brush brush = RflBrushParser.ReadRF1Brush(reader, version);
+						Brush brush = RFGeometryParser.ReadBrush(reader, version);
 						mesh.Brushes.Add(brush);
 					}
 					// ----- END reading brush section -----

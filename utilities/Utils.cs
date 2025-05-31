@@ -202,6 +202,16 @@ namespace redux.utilities
 
 	public static class RflUtils
 	{
+		public static bool IsRF2 (int rfl_version)
+		{
+			// 295
+			return rfl_version == 0x127;
+		}
+		public static bool IsRF1(int rfl_version)
+		{
+			// >= 300 || <= 180
+			return rfl_version >= 0x12C || rfl_version <= 0xC8;
+		}
 		public readonly struct VertexKey : IEquatable<VertexKey>
 		{
 			public readonly Vector3 Position;
