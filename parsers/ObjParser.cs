@@ -45,12 +45,62 @@ namespace redux.parsers
 				switch (parts[0])
 				{
 					case "o":
+						// Add a new brush
 						if (parts.Length > 1)
 						{
 							string objectName = parts[1];
-							int uid = ObjUtils.ParseUidFromObjectName(objectName, mesh.Brushes.Count);
-							uint flags = ObjUtils.ParseFlagsFromObjectName(objectName);
+							// Split name on “_”
+							var tokens = objectName.Split('_', StringSplitOptions.RemoveEmptyEntries);
 
+							// Ensure we have "Brush" and a UID
+							if (tokens.Length < 2 || !tokens[0].Equals("Brush", StringComparison.OrdinalIgnoreCase))
+							{
+								Logger.Warn(logSrc, $"Unrecognized object name format: '{objectName}'. Using sequential UID instead.");
+								tokens = new[] { "Brush" }; // so we fall through to sequential assignment
+							}
+
+							// Parse UID
+							int uid;
+							if (tokens.Length >= 2 && int.TryParse(tokens[1], out int parsedUid))
+							{
+								uid = parsedUid;
+							}
+							else
+							{
+								uid = mesh.Brushes.Count + 1;
+								Logger.Warn(logSrc, $"Invalid or missing UID in object name: '{objectName}'. Assigning sequential UID = {uid}.");
+							}
+
+							// Check flags
+							uint flags = 0;
+							if (Config.SimpleBrushNames || tokens.Length == 2)
+							{
+								// Simple mode is set or the name is invlaid. flags = 0
+							}
+							else
+							{
+								// "A" or "S"
+								if (tokens.Length >= 3 && tokens[2].Equals("A", StringComparison.OrdinalIgnoreCase))
+									flags |= (uint)SolidFlags.Air;
+
+								// "D" or "nD"
+								if (tokens.Length >= 4 && tokens[3].Equals("D", StringComparison.OrdinalIgnoreCase))
+									flags |= (uint)SolidFlags.Detail;
+
+								// "P" or "nP"
+								if (tokens.Length >= 5 && tokens[4].Equals("P", StringComparison.OrdinalIgnoreCase))
+									flags |= (uint)SolidFlags.Portal;
+
+								// "ES" or "nES"
+								if (tokens.Length >= 6 && tokens[5].Equals("ES", StringComparison.OrdinalIgnoreCase))
+									flags |= (uint)SolidFlags.EmitsSteam;
+
+								// "G" or "nG"
+								if (tokens.Length >= 7 && tokens[6].Equals("G", StringComparison.OrdinalIgnoreCase))
+									flags |= (uint)SolidFlags.Geoable;
+							}
+
+							// Create the new brush
 							currentBrush = new Brush
 							{
 								UID = uid,
@@ -59,14 +109,18 @@ namespace redux.parsers
 								Position = Vector3.Zero,
 								Solid = new Solid
 								{
-									State = 3,
-									Life = -1,
-									Flags = flags
+									State = 3,     // default “selected”
+									Life = -1,     // default
+									Flags = flags  // as parsed
 								}
 							};
 							mesh.Brushes.Add(currentBrush);
+
+							// Reset the per‐brush maps
 							currentVertexMap = new Dictionary<RflUtils.VertexKey, int>();
-							Logger.Debug(logSrc, $"Started object '{objectName}' as brush UID {currentBrush.UID}");
+							textureIndexByMaterial = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+							Logger.Debug(logSrc, $"Started object '{objectName}' as Brush UID={uid}, Flags=0x{flags:X}");
 						}
 						break;
 

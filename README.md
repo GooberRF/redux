@@ -33,13 +33,13 @@ Arguments:
 - `-textranslate <bool>`      RF2 → RF1 texture name translation. If false, keep original RF2 filenames. Default: false
 - `-brushes <bool>`           Export brush data from RFL. If false, exports static geometry. Default: false
 - `-geonodetail <bool>`       Remove detail flag from geoable brushes. Only applies for brushes from RF2 RFLs. Default: false
-- `-portalfaces <bool>`       Include portal faces. Default: false
+- `-portalfaces <bool>`       Include portal faces. Default: true
 - `-detailfaces <bool>`       Include faces from detail brushes. Default: true
 - `-alphafaces <bool>`        Include faces with alpha textures. Default: true
 - `-holefaces <bool>`         Include faces with shoot-through alpha textures. Default: true
 - `-liquidfaces <bool>`       Include liquid surfaces. Default: false
-- `-skyfaces <bool>`          Include Show Sky faces. Default: false
-- `-invisiblefaces <bool>`    Include invisible faces. Default: false
+- `-skyfaces <bool>`          Include Show Sky faces. Default: true
+- `-invisiblefaces <bool>`    Include invisible faces. Default: true
 - `-ver` / `help` / `-h`      Print version/usage/help information
 - `-loglevel <level>`         Set verbosity level (`debug`, `dev`, `info`, `warn`, `error`) or (0–4). Defaults to `info`
 

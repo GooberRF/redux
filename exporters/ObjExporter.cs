@@ -35,12 +35,20 @@ namespace redux.exporters
 			{
 				if (brush.Vertices.Count == 0) continue;
 
-				bool isAir = (brush.Solid.Flags & (uint)SolidFlags.Air) != 0;
-				bool isDet = (brush.Solid.Flags & (uint)SolidFlags.Detail) != 0;
-				bool isPort = (brush.Solid.Flags & (uint)SolidFlags.Portal) != 0;
-				bool isSteam = (brush.Solid.Flags & (uint)SolidFlags.EmitsSteam) != 0;
+				var name = $"Brush_{brush.UID}";
 
-				var name = $"Brush_{brush.UID}_{(isAir ? "A" : "S")}_{(isDet ? "D" : "nD")}_{(isPort ? "P" : "nP")}_{(isSteam ? "ES" : "nES")}";
+				// Add brush flags to the name
+				// Used to track flags between conversions
+				if (!Config.SimpleBrushNames)
+				{
+					bool isAir = (brush.Solid.Flags & (uint)SolidFlags.Air) != 0;
+					bool isDetail = (brush.Solid.Flags & (uint)SolidFlags.Detail) != 0;
+					bool isPortal = (brush.Solid.Flags & (uint)SolidFlags.Portal) != 0;
+					bool isEmitsSteam = (brush.Solid.Flags & (uint)SolidFlags.EmitsSteam) != 0;
+					bool isGeoable = (brush.Solid.Flags & (uint)SolidFlags.Geoable) != 0;
+
+					name = $"Brush_{brush.UID}_{(isAir ? "A" : "S")}_{(isDetail ? "D" : "nD")}_{(isPortal ? "P" : "nP")}_{(isEmitsSteam ? "ES" : "nES")}_{(isGeoable ? "G" : "nG")}";
+				}
 				obj.WriteLine($"o {name}");
 
 				// Merge verts by position in world space only 
@@ -224,7 +232,184 @@ namespace redux.exporters
 				vtOffset += VT.Count;
 				vnOffset += VN.Count;
 
+				foreach (var prop in brush.PropPoints)
+				{
+					// Prop object name: Prop_<brushID>_<propName>
+					string safeName = Path.GetInvalidFileNameChars()
+						.Aggregate(prop.Name, (s, c) => s.Replace(c, '='));
+					string objName = $"RFPP={brush.UID}={safeName}";
+					obj.WriteLine($"o {objName}");
+
+					// Compute world‐space position of the PropPoint:
+					var wp = Vector3.Transform(prop.Position, brush.RotationMatrix)
+							 + brush.Position;
+
+					// Compute the “forward” direction from the quaternion, then flip it:
+					var forward = Vector3.Transform(new Vector3(0, 0, 1), prop.Orientation);
+					forward = Vector3.Normalize(forward);
+					forward = -forward; // flip direction
+
+					float arrowLength = 1.0f; // shaft length
+					float wingLength = 0.25f; // arrowhead wing length
+
+					// Tip of arrow = base + flipped_forward * arrowLength
+					var tip = wp + forward * arrowLength;
+
+					// Choose a “right” vector perpendicular to flipped forward:
+					Vector3 worldUp = Vector3.UnitY;
+					Vector3 right = Vector3.Cross(forward, worldUp);
+					if (right.LengthSquared() < 1e-6f)
+						right = Vector3.Cross(forward, Vector3.UnitX);
+					right = Vector3.Normalize(right);
+
+					// Arrowhead wings:
+					var wingBase = tip - forward * wingLength;
+					var wing1 = wingBase + right * wingLength;
+					var wing2 = wingBase - right * wingLength;
+
+					// 1) Write base vertex:
+					obj.WriteLine(
+						$"v {(-wp.X).ToString(CultureInfo.InvariantCulture)} " +
+						$"{wp.Y.ToString(CultureInfo.InvariantCulture)} " +
+						$"{wp.Z.ToString(CultureInfo.InvariantCulture)}"
+					);
+
+					// 2) Write tip vertex:
+					obj.WriteLine(
+						$"v {(-tip.X).ToString(CultureInfo.InvariantCulture)} " +
+						$"{tip.Y.ToString(CultureInfo.InvariantCulture)} " +
+						$"{tip.Z.ToString(CultureInfo.InvariantCulture)}"
+					);
+
+					// 3) Write wing1 vertex:
+					obj.WriteLine(
+						$"v {(-wing1.X).ToString(CultureInfo.InvariantCulture)} " +
+						$"{wing1.Y.ToString(CultureInfo.InvariantCulture)} " +
+						$"{wing1.Z.ToString(CultureInfo.InvariantCulture)}"
+					);
+
+					// 4) Write wing2 vertex:
+					obj.WriteLine(
+						$"v {(-wing2.X).ToString(CultureInfo.InvariantCulture)} " +
+						$"{wing2.Y.ToString(CultureInfo.InvariantCulture)} " +
+						$"{wing2.Z.ToString(CultureInfo.InvariantCulture)}"
+					);
+
+					// 5) Draw shaft: line from base (index=vOffset) to tip (index=vOffset+1)
+					obj.WriteLine($"l {vOffset} {vOffset + 1}");
+
+					// 6) Draw arrowhead wings:
+					obj.WriteLine($"l {vOffset + 1} {vOffset + 2}"); // tip → wing1
+					obj.WriteLine($"l {vOffset + 1} {vOffset + 3}"); // tip → wing2
+
+					// 7) (Optional) Write orientation quaternion as a comment
+					obj.WriteLine(
+						"# quat " +
+						$"{prop.Orientation.X.ToString(CultureInfo.InvariantCulture)} " +
+						$"{prop.Orientation.Y.ToString(CultureInfo.InvariantCulture)} " +
+						$"{prop.Orientation.Z.ToString(CultureInfo.InvariantCulture)} " +
+						$"{prop.Orientation.W.ToString(CultureInfo.InvariantCulture)}"
+					);
+
+					// 8) (Optional) Write parent‐index as a comment
+					obj.WriteLine($"# parent {prop.ParentIndex}");
+
+					Logger.Dev(logSrc, $"Wrote prop point {prop.Name} with parent {prop.ParentIndex}, " +
+										$"vertices vIndices={vOffset},{vOffset + 1},{vOffset + 2},{vOffset + 3}");
+
+					// 9) We used four “v” lines → bump vOffset by 4
+					vOffset += 4;
+				}
+
 				Logger.Dev(logSrc, $"Wrote brush {brush.UID}");
+			}
+
+			int stacks = 6, slices = 6;
+			for (int i = 0; i < mesh.CollisionSpheres.Count; i++)
+			{
+				var cs = mesh.CollisionSpheres[i];
+				string safeName = Path.GetInvalidFileNameChars()
+					.Aggregate(cs.Name, (s, c) => s.Replace(c, '_'));
+				string objName = $"CSphere_{i}_{safeName}";
+				obj.WriteLine($"o {objName}");
+
+				var center = cs.Position;
+				float radius = cs.Radius;
+
+				// Generate (stacks+1)×slices vertices on sphere
+				// iLat = 0..stacks, iLon = 0..slices-1
+				for (int iLat = 0; iLat <= stacks; iLat++)
+				{
+					float theta = (float)Math.PI * iLat / stacks; // 0..π
+					float sinT = (float)Math.Sin(theta);
+					float cosT = (float)Math.Cos(theta);
+
+					for (int iLon = 0; iLon < slices; iLon++)
+					{
+						float phi = 2f * (float)Math.PI * iLon / slices; // 0..2π
+						float sinP = (float)Math.Sin(phi);
+						float cosP = (float)Math.Cos(phi);
+
+						// Base sphere point (before scaling/translating):
+						// x = sinθ·cosφ, y = cosθ, z = sinθ·sinφ
+						var p = new Vector3(
+							sinT * cosP,
+							cosT,
+							sinT * sinP
+						);
+
+						// Scale by radius, translate by center
+						p = center + p * radius;
+
+						// Flip X for OBJ right‐handed
+						obj.WriteLine(
+							$"v {(-p.X).ToString(CultureInfo.InvariantCulture)} " +
+							$"{p.Y.ToString(CultureInfo.InvariantCulture)} " +
+							$"{p.Z.ToString(CultureInfo.InvariantCulture)}"
+						);
+					}
+				}
+
+				// Build faces (triangles) between these vertices
+				// Indexing: baseIndex = vOffset, then
+				// index(iLat, iLon) = baseIndex + iLat*slices + iLon
+				int baseIndex = vOffset;
+				for (int iLat = 0; iLat < stacks; iLat++)
+				{
+					for (int iLon = 0; iLon < slices; iLon++)
+					{
+						int nextLon = (iLon + 1) % slices;
+						int i0 = baseIndex + iLat * slices + iLon;
+						int i1 = baseIndex + iLat * slices + nextLon;
+						int i2 = baseIndex + (iLat + 1) * slices + iLon;
+						int i3 = baseIndex + (iLat + 1) * slices + nextLon;
+
+						if (iLat == 0)
+						{
+							// Top cap: one triangle (i0, i2, i3)
+							obj.WriteLine($"f {i0} {i2} {i3}");
+						}
+						else if (iLat == stacks - 1)
+						{
+							// Bottom cap: one triangle (i0, i2, i1)
+							obj.WriteLine($"f {i0} {i2} {i1}");
+						}
+						else
+						{
+							// Middle: two triangles
+							obj.WriteLine($"f {i0} {i2} {i1}");
+							obj.WriteLine($"f {i1} {i2} {i3}");
+						}
+					}
+				}
+
+				// Write radius comment for reconstruction
+				obj.WriteLine($"# radius {radius.ToString(CultureInfo.InvariantCulture)}");
+
+				Logger.Dev(logSrc, $"Wrote CSphere '{cs.Name}' as sphere with center ({center.X},{center.Y},{center.Z}), " +
+									$"radius={radius}, vIndices={vOffset}..{vOffset + (stacks + 1) * slices - 1}");
+
+				vOffset += (stacks + 1) * slices;
 			}
 
 			Logger.Info(logSrc, $"{objPath} and {mtlPath} written successfully.");
