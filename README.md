@@ -30,6 +30,7 @@ Arguments:
 - `-output <file>`            Path to the output file
 - `-swapitem <class>`         Overwrite all item classes in exported RFGs with the specified item class.
 - `-ngons <bool>`             Allow n-sided polygons. If false, triangulate all polygons. Default: false
+- `-simplenames <bool>`       Use simple brush name Brush_UID. If false, include brush flags in name. Default: false
 - `-textranslate <bool>`      RF2 → RF1 texture name translation. If false, keep original RF2 filenames. Default: false
 - `-brushes <bool>`           Export brush data from RFL. If false, exports static geometry. Default: false
 - `-geonodetail <bool>`       Remove detail flag from geoable brushes. Only applies for RF2 brushes. Default: false
@@ -46,6 +47,7 @@ Arguments:
 Notes:  
 ------
 - Boolean options accept `true`, `false`, `1`, `0`. If no value is provided, presence of the option is treated as `true`.
+- Class options reference class names from in the corresponding .tbl file. Use quotation marks if it has spaces.
 
 Credit:  
 ------
