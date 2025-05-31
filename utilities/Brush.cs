@@ -14,6 +14,8 @@ namespace redux.utilities
 		public List<RflItem> Items { get; } = new();
 		public List<ClimbingRegion> ClimbingRegions { get; } = new();
 		public List<ParticleEmitter> ParticleEmitters { get; } = new();
+		public List<CollisionSphere> CollisionSpheres { get; } = new();
+		public List<Bone> Bones { get; } = new List<Bone>();
 	}
 
 	public class Brush
@@ -68,12 +70,6 @@ namespace redux.utilities
 		public bool ShowSky => (FaceFlags & 0x01) != 0;
 		public bool IsInvisible => (FaceFlags & 0x2000) != 0;
 
-	}
-	public class PropPoint
-	{
-		public string Name { get; set; }
-		public Vector3 Position { get; set; }
-		public Quaternion Rotation { get; set; }
 	}
 	public enum LightType : byte
 	{
@@ -341,4 +337,104 @@ namespace redux.utilities
 		public float TimeOffRandomize { get; set; }
 		public float ActiveDistance { get; set; }
 	}
+
+	public class LodMesh
+	{
+		public uint Flags;
+		public int NumVertices;
+		public int NumChunks;
+		public byte[] DataBlock;
+		public int Unknown1;      // always –1
+
+		public ChunkInfo[] ChunkInfos;
+		public int NumPropPoints;
+		public int NumTextures;
+		public LodTexture[] Textures;
+		public PropPoint[] PropPoints;
+
+		public int[] ChunkHeaders;
+		public ChunkData[] Chunks;
+	}
+
+	public enum LodFlags : uint
+	{
+		OrigMap = 0x01,
+		Character = 0x02,
+		Reflection = 0x04,
+		_10 = 0x10,
+		TrianglePlanes = 0x20
+	}
+
+	public struct ChunkInfo
+	{
+		public ushort NumVertices;
+		public ushort NumFaces;
+		public ushort VecsAlloc;
+		public ushort FacesAlloc;
+		public ushort SamePosVertexOffsetsAlloc;
+		public ushort WiAlloc;
+		public ushort UvsAlloc;
+		public uint RenderFlags;
+	}
+
+	public struct LodTexture
+	{
+		public byte Id;
+		public string Filename;
+	}
+
+	public struct PropPoint
+	{
+		public string Name;
+		public Quaternion Orientation;
+		public Vector3 Position;
+		public int ParentIndex;
+	}
+
+	public struct Triangle
+	{
+		public ushort I0, I1, I2;
+		public ushort Flags;
+	}
+
+	public class ChunkData
+	{
+		public Vector3[] Positions;
+		public Vector3[] Normals;
+		public Vector2[] UVs;
+		public Triangle[] Triangles;
+		public RFPlane[] Planes;
+		public short[] SamePosVertexOffsets;
+		public VertexBoneLink[] BoneLinks;
+		public short[] OrigMap;
+	}
+
+	public struct VertexBoneLink
+	{
+		public byte[] Weights; // 4
+		public byte[] Bones;   // 4
+	}
+
+	public struct RFPlane
+	{
+		public Vector3 Normal;
+		public float Dist;
+	}
+
+	public class CollisionSphere
+	{
+		public string Name { get; set; }
+		public int ParentIndex { get; set; }
+		public Vector3 Position { get; set; }
+		public float Radius { get; set; }
+	}
+
+	public class Bone
+	{
+		public string Name { get; set; }
+		public Quaternion BaseRotation { get; set; }
+		public Vector3 BaseTranslation { get; set; }
+		public int ParentIndex { get; set; }
+	}
+
 }

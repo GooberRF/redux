@@ -7,15 +7,16 @@ namespace redux.utilities
 {
 	public static class Config
 	{
-		public static bool IncludePortalFaces { get; set; } = false;
+		public static bool IncludePortalFaces { get; set; } = true;
 		public static bool IncludeDetailFaces { get; set; } = true;
 		public static bool IncludeAlphaFaces { get; set; } = true;
 		public static bool IncludeHoleFaces { get; set; } = true;
 		public static bool IncludeLiquidFaces { get; set; } = false;
-		public static bool IncludeSkyFaces { get; set; } = false;
-		public static bool IncludeInvisibleFaces { get; set; } = false;
+		public static bool IncludeSkyFaces { get; set; } = true;
+		public static bool IncludeInvisibleFaces { get; set; } = true;
 		public static bool ParseBrushSectionInstead { get; set; } = false;
 		public static bool TriangulatePolygons { get; set; } = true;
+		public static bool SimpleBrushNames { get; set; } = false;
 		public static bool TranslateRF2Textures { get; set; } = false;
 		public static bool SetRF2GeoableNonDetail { get; set; } = false;
 		public static string ReplacementItemName { get; set; } = "";
@@ -119,6 +120,26 @@ namespace redux.utilities
 
 			writer.Write((ushort)bytes.Length);
 			writer.Write(bytes);
+		}
+
+		public static string ReadFixedAscii(BinaryReader r, int length)
+		{
+			var bytes = r.ReadBytes(length);
+			int end = Array.IndexOf<byte>(bytes, 0);
+			if (end < 0) end = length;
+			return System.Text.Encoding.ASCII.GetString(bytes, 0, end);
+		}
+
+		public static string ReadZeroTerminatedAscii(BinaryReader r)
+		{
+			var sb = new System.Text.StringBuilder();
+			while (true)
+			{
+				byte b = r.ReadByte();
+				if (b == 0) break;
+				sb.Append((char)b);
+			}
+			return sb.ToString();
 		}
 
 		public enum EditorViewType : int

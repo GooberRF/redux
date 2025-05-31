@@ -8,7 +8,7 @@ namespace redux
 {
 	class Program
 	{
-		private const string Version = "0.2.2";
+		private const string Version = "0.2.3";
 		private const string logSrc = "REDUX";
 		static void Main(string[] args)
 		{
@@ -28,33 +28,39 @@ namespace redux
 				Console.WriteLine("Usage:");
 				Console.WriteLine("  redux.exe -input <file> -output <file> [options]");
 				Console.WriteLine();
-				Console.WriteLine("  <bool> options can be set with true|false. If specified with no value provided, they are treated as true.");
-				Console.WriteLine();
 				Console.WriteLine("Supported input formats:");
+				Console.WriteLine("  RF1/RF2 Level (.rfl)    Static geometry or brushes from non-moving groups, many object types, level properties, level info");
 				Console.WriteLine("  RF Group (.rfg)         Brushes from non-moving groups");
-				Console.WriteLine("  RF1/RF2 Level (.rfl)    Static geometry or brushes from non-moving groups");
+				Console.WriteLine("  RF Static Mesh (.v3m)   Mesh with submeshes, LODs, prop points, and cspheres");
 				Console.WriteLine("  Wavefront OBJ (.obj)    Geometry objects");
 				Console.WriteLine();
 				Console.WriteLine("Supported output formats:");
-				Console.WriteLine("  RF Group (.rfg)         Brushes with flags (air, portal, detail, etc.)");
+				Console.WriteLine("  RF Group (.rfg)         Brushes with flags (air, portal, detail, etc.), many object types");
 				Console.WriteLine("  RF Static Mesh (.v3m)   Mesh with submeshes for each brush");
 				Console.WriteLine("  Wavefront OBJ (.obj)    Geometry objects with flags in object names");
 				Console.WriteLine();
-				Console.WriteLine("Options:");
+				Console.WriteLine("Supported arguments:");
+				Console.WriteLine("  -input, -i              Specify input file with an extension from the above list.");
+				Console.WriteLine("  -output, -o             Specify output file with an extension from the above list.");
 				Console.WriteLine("  -help, -ver, -h, -v     Show this help message.");
 				Console.WriteLine("  -loglevel <level>       Set log message verbosity. Accepts: debug (0), dev (1), info (2), warn (3), error (4). Default: info");
 				Console.WriteLine("  -swapitem <class>       If set, overwrite all item classes in exported RFGs with the specified item class.");
 				Console.WriteLine("  -ngons <bool>           Allow n-sided polygons. If false, triangulate all polygons. Default: false");
+				Console.WriteLine("  -simplenames <bool>     Use simple brush name Brush_UID. If false, include brush flags in name. Default: false");
 				Console.WriteLine("  -textranslate <bool>    Enable RF2 → RF1 texture name translation. If false, keep original RF2 filenames. Default: false");
 				Console.WriteLine("  -brushes <bool>         Export brush data from RFL. If false, exports static geometry. Default: false");
 				Console.WriteLine("  -geonodetail <bool>     Remove detail flag from all geoable brushes. Only applies for brushes from RF2 RFLs. Default: false");
-				Console.WriteLine("  -portalfaces <bool>     Include portal faces. Only applies for static geometry. Default: false");
+				Console.WriteLine("  -portalfaces <bool>     Include portal faces. Only applies for static geometry. Default: true");
 				Console.WriteLine("  -detailfaces <bool>     Include faces from detail brushes. Only applies for static geometry. Default: true");
 				Console.WriteLine("  -alphafaces <bool>      Include faces with alpha textures. Only applies for static geometry. Default: true");
 				Console.WriteLine("  -holefaces <bool>       Include faces with shoot-through alpha textures. Only applies for static geometry. Default: true");
 				Console.WriteLine("  -liquidfaces <bool>     Include liquid surfaces. Only applies for static geometry. Default: false");
-				Console.WriteLine("  -skyfaces <bool>        Include Show Sky faces. Only applies for static geometry. Default: false");
-				Console.WriteLine("  -invisiblefaces <bool>  Include invisible faces. Only applies for static geometry. Default: false");
+				Console.WriteLine("  -skyfaces <bool>        Include Show Sky faces. Only applies for static geometry. Default: true");
+				Console.WriteLine("  -invisiblefaces <bool>  Include invisible faces. Only applies for static geometry. Default: true");
+				Console.WriteLine();
+				Console.WriteLine("Notes:");
+				Console.WriteLine("  <bool> can be set with true|false. If specified with no value provided, they are treated as true.");
+				Console.WriteLine("  <class> references class names from in the corresponding .tbl file. Use quotation marks if it has spaces.");
 
 				return;
 			}
@@ -64,11 +70,13 @@ namespace redux
 
 			for (int i = 0; i < args.Length; i++)
 			{
-				if (args[i].Equals("-input", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+				if ((args[i].Equals("-input", StringComparison.OrdinalIgnoreCase) || args[i].Equals("-i", StringComparison.OrdinalIgnoreCase))
+					&& i + 1 < args.Length)
 				{
 					inputFile = args[++i];
 				}
-				else if (args[i].Equals("-output", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+				else if ((args[i].Equals("-output", StringComparison.OrdinalIgnoreCase) || args[i].Equals("-o", StringComparison.OrdinalIgnoreCase))
+					&& i + 1 < args.Length)
 				{
 					outputFile = args[++i];
 				}
@@ -110,6 +118,11 @@ namespace redux
 					{
 						if (TryGetBoolArg(i, out var val)) i++;
 						Config.ParseBrushSectionInstead = val;
+					}
+					else if (IsBoolArg("-simplenames"))
+					{
+						if (TryGetBoolArg(i, out var val)) i++;
+						Config.SimpleBrushNames = val;
 					}
 					else if (IsBoolArg("-textranslate"))
 					{
@@ -170,45 +183,125 @@ namespace redux
 				return;
 			}
 
-			if (inputFile.EndsWith(".rfg", StringComparison.OrdinalIgnoreCase) && outputFile.EndsWith(".obj", StringComparison.OrdinalIgnoreCase))
+			string inExt = Path.GetExtension(inputFile).ToLowerInvariant();
+			string outExt = Path.GetExtension(outputFile).ToLowerInvariant();
+
+			Logger.Info(logSrc, $"Converting {inExt} → {outExt}: {inputFile} → {outputFile}");
+
+			switch (inExt)
 			{
-				Logger.Info(logSrc, $"Converting RFG -> OBJ: {inputFile} -> {outputFile}");
-				var mesh = RfgParser.ReadRfg(inputFile);
-				ObjExporter.ExportObj(mesh, outputFile);
-			}
-			else if (inputFile.EndsWith(".rfg", StringComparison.OrdinalIgnoreCase) && outputFile.EndsWith(".v3m", StringComparison.OrdinalIgnoreCase))
-			{
-				Logger.Info(logSrc, $"Converting RFG -> V3M: {inputFile} -> {outputFile}");
-				var mesh = RfgParser.ReadRfg(inputFile);
-				V3mExporter.ExportV3m(mesh, outputFile);
-			}
-			else if (inputFile.EndsWith(".rfg", StringComparison.OrdinalIgnoreCase) && outputFile.EndsWith(".rfg", StringComparison.OrdinalIgnoreCase))
-			{
-				Logger.Info(logSrc, $"Converting RFG -> RFG: {inputFile} -> {outputFile}");
-				var mesh = RfgParser.ReadRfg(inputFile);
-				RfgExporter.ExportRfg(mesh, outputFile);
-			}
-			else if (inputFile.EndsWith(".obj", StringComparison.OrdinalIgnoreCase) && outputFile.EndsWith(".rfg", StringComparison.OrdinalIgnoreCase))
-			{
-				Logger.Info(logSrc, $"Converting OBJ -> RFG: {inputFile} -> {outputFile}");
-				var mesh = ObjParser.ReadObj(inputFile);
-				RfgExporter.ExportRfg(mesh, outputFile);
-			}
-			else if (inputFile.EndsWith(".rfl", StringComparison.OrdinalIgnoreCase) && outputFile.EndsWith(".obj", StringComparison.OrdinalIgnoreCase))
-			{
-				Logger.Info(logSrc, $"Converting RFL -> OBJ: {inputFile} -> {outputFile}");
-				var mesh = RflParser.ReadRfl(inputFile);
-				ObjExporter.ExportObj(mesh, outputFile);
-			}
-			else if (inputFile.EndsWith(".rfl", StringComparison.OrdinalIgnoreCase) && outputFile.EndsWith(".rfg", StringComparison.OrdinalIgnoreCase))
-			{
-				Logger.Info(logSrc, $"Converting RFL -> RFG: {inputFile} -> {outputFile}");
-				var mesh = RflParser.ReadRfl(inputFile);
-				RfgExporter.ExportRfg(mesh, outputFile);
-			}
-			else
-			{
-				Logger.Error(logSrc, "Unsupported conversion requested, cannot process.");
+				case ".rfg":
+					switch (outExt)
+					{
+						case ".rfg": // for testing parser
+							{
+								var mesh = RfgParser.ReadRfg(inputFile);
+								RfgExporter.ExportRfg(mesh, outputFile);
+								break;
+							}
+						case ".obj":
+							{
+								var mesh = RfgParser.ReadRfg(inputFile);
+								ObjExporter.ExportObj(mesh, outputFile);
+								break;
+							}
+						case ".v3m":
+							{
+								var mesh = RfgParser.ReadRfg(inputFile);
+								V3mExporter.ExportV3m(mesh, outputFile);
+								break;
+							}
+						default:
+							Logger.Error(logSrc, $"Unsupported output format “{outExt}” for .rfg input.");
+							break;
+					}
+					break;
+
+				case ".v3c":
+				case ".v3m":
+					switch (outExt)
+					{
+						case ".v3m": // for testing parser
+							{
+								var mesh = V3mParser.ReadV3mAsRflMesh(inputFile);
+								V3mExporter.ExportV3m(mesh, outputFile);
+								break;
+							}
+						case ".rfg":
+							{
+								var mesh = V3mParser.ReadV3mAsRflMesh(inputFile);
+								RfgExporter.ExportRfg(mesh, outputFile);
+								break;
+							}
+						case ".obj":
+							{
+								var mesh = V3mParser.ReadV3mAsRflMesh(inputFile);
+								ObjExporter.ExportObj(mesh, outputFile);
+								break;
+							}
+						default:
+							Logger.Error(logSrc, $"Unsupported output format “{outExt}” for .v3m input.");
+							break;
+					}
+					break;
+
+				case ".obj":
+					switch (outExt)
+					{
+						case ".obj": // for testing parser
+							{
+								var mesh = ObjParser.ReadObj(inputFile);
+								ObjExporter.ExportObj(mesh, outputFile);
+								break;
+							}
+						case ".rfg":
+							{
+								var mesh = ObjParser.ReadObj(inputFile);
+								RfgExporter.ExportRfg(mesh, outputFile);
+								break;
+							}
+						case ".v3m":
+							{
+								var mesh = ObjParser.ReadObj(inputFile);
+								V3mExporter.ExportV3m(mesh, outputFile);
+								break;
+							}
+						default:
+							Logger.Error(logSrc, $"Unsupported output format “{outExt}” for .obj input.");
+							break;
+					}
+					break;
+
+				case ".rfl":
+					switch (outExt)
+					{
+						case ".obj":
+							{
+								var mesh = RflParser.ReadRfl(inputFile);
+								ObjExporter.ExportObj(mesh, outputFile);
+								break;
+							}
+						case ".rfg":
+							{
+								var mesh = RflParser.ReadRfl(inputFile);
+								RfgExporter.ExportRfg(mesh, outputFile);
+								break;
+							}
+						case ".v3m":
+							{
+								var mesh = RflParser.ReadRfl(inputFile);
+								V3mExporter.ExportV3m(mesh, outputFile);
+								break;
+							}
+						default:
+							Logger.Error(logSrc, $"Unsupported output format “{outExt}” for .rfl input.");
+							break;
+					}
+					break;
+
+				default:
+					Logger.Error(logSrc, $"Unsupported input format “{inExt}”.");
+					break;
 			}
 		}
 	}
