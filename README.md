@@ -32,7 +32,7 @@ Arguments:
 - `-ngons <bool>`             Allow n-sided polygons. If false, triangulate all polygons. Default: false
 - `-textranslate <bool>`      RF2 → RF1 texture name translation. If false, keep original RF2 filenames. Default: false
 - `-brushes <bool>`           Export brush data from RFL. If false, exports static geometry. Default: false
-- `-geonodetail <bool>`       Remove detail flag from geoable brushes. Only applies for brushes from RF2 RFLs. Default: false
+- `-geonodetail <bool>`       Remove detail flag from geoable brushes. Only applies for RF2 brushes. Default: false
 - `-portalfaces <bool>`       Include portal faces. Default: true
 - `-detailfaces <bool>`       Include faces from detail brushes. Default: true
 - `-alphafaces <bool>`        Include faces with alpha textures. Default: true
