@@ -299,6 +299,16 @@ namespace redux
 					}
 					break;
 
+				case ".rfa":
+					switch (outExt)
+					{
+						default:
+							//Logger.Error(logSrc, $"Unsupported output format “{outExt}” for .v3m input.");
+							RfaParser.ReadRfa(inputFile);
+							break;
+					}
+					break;
+
 				default:
 					Logger.Error(logSrc, $"Unsupported input format “{inExt}”.");
 					break;

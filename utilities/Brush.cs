@@ -439,5 +439,57 @@ namespace redux.utilities
 		public Vector3 BaseTranslation { get; set; }
 		public int ParentIndex { get; set; }
 	}
-
+	public class RfaFile
+	{
+		public RfaHeader Header { get; set; }
+		public List<RfaBone> Bones { get; set; }
+		public short[] MorphVertexMappings { get; set; }
+		public List<MorphKeyframe> MorphKeyframes { get; set; }
+	}
+	public class RfaHeader
+	{
+		public byte[] Magic { get; set; }
+		public int Version { get; set; }
+		public float PosReduction { get; set; }
+		public float RotReduction { get; set; }
+		public int StartTime { get; set; }
+		public int EndTime { get; set; }
+		public int NumBones { get; set; }
+		public int NumMorphVertices { get; set; }
+		public int NumMorphKeyframes { get; set; }
+		public int RampInTime { get; set; }
+		public int RampOutTime { get; set; }
+		public Quaternion TotalRotation { get; set; }
+		public Vector3 TotalTranslation { get; set; }
+		public int MorphVertexMappingsOffset { get; set; }
+		public int MorphVertexDataOffset { get; set; }
+		public int[] BoneOffsets { get; set; }
+	}
+	public class RfaBone
+	{
+		public float Weight { get; set; }
+		public short NumRotationKeys { get; set; }
+		public short NumTranslationKeys { get; set; }
+		public List<RfaRotationKey> RotationKeys { get; set; }
+		public List<RfaTranslationKey> TranslationKeys { get; set; }
+	}
+	public class RfaRotationKey
+	{
+		public int Time { get; set; }
+		public Quaternion Rotation { get; set; }
+		public byte EaseIn { get; set; }
+		public byte EaseOut { get; set; }
+	}
+	public class RfaTranslationKey
+	{
+		public int Time { get; set; }
+		public Vector3 Translation { get; set; }
+		public Vector3 InTangent { get; set; }
+		public Vector3 OutTangent { get; set; }
+	}
+	public class MorphKeyframe
+	{
+		public int Time { get; set; }
+		public Vector3[] Positions { get; set; }
+	}
 }
