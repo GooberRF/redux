@@ -191,6 +191,9 @@ namespace redux.parsers
 				var faces = new List<Face>();
 				var indices = new List<int>();
 
+				var jointIndices = new List<Vector4>();
+				var jointWeights = new List<Vector4>();
+
 				for (int ci = 0; ci < lod.NumChunks; ci++)
 				{
 					var info = lod.ChunkInfos[ci];
@@ -206,7 +209,33 @@ namespace redux.parsers
 					foreach (var uv in chunkData.UVs)
 						uvs.Add(uv);
 
-					for (int f = 0; f < chunkData.Triangles.Length; f++)
+					for (int vi = 0; vi < chunkData.Positions.Length; vi++)
+					{
+						if (chunkData.BoneLinks != null && chunkData.BoneLinks.Length > 0)
+						{
+							var link = chunkData.BoneLinks[vi];
+							// byte[4] each for Weights and Bones
+							float w0 = link.Weights[0] / 255f;
+							float w1 = link.Weights[1] / 255f;
+							float w2 = link.Weights[2] / 255f;
+							float w3 = link.Weights[3] / 255f;
+							jointWeights.Add(new Vector4(w0, w1, w2, w3));
+
+							float j0 = link.Bones[0];
+							float j1 = link.Bones[1];
+							float j2 = link.Bones[2];
+							float j3 = link.Bones[3];
+							jointIndices.Add(new Vector4(j0, j1, j2, j3));
+						}
+						else
+						{
+							// No bone‐link info → put a “zero” influence on bone 0
+							jointWeights.Add(new Vector4(1, 0, 0, 0));
+							jointIndices.Add(new Vector4(0, 0, 0, 0));
+						}
+					}
+
+						for (int f = 0; f < chunkData.Triangles.Length; f++)
 					{
 						var tri = chunkData.Triangles[f];
 						int i0 = baseIndex + tri.I0;
@@ -241,8 +270,10 @@ namespace redux.parsers
 				brush.UVs = uvs;
 				brush.Indices = indices;
 				brush.Solid.Faces = faces;
+					brush.JointIndices = jointIndices;
+					brush.JointWeights = jointWeights;
 
-				foreach (var matName in submeshMaterials)
+					foreach (var matName in submeshMaterials)
 					brush.Solid.Textures.Add(matName);
 
 				brushes.Add(brush);
@@ -416,7 +447,7 @@ namespace redux.parsers
 				if (pad > 0) r.ReadBytes((int)pad);
 
 				Logger.Debug(logSrc, $"        Read {numOffsets} same_pos offsets, skipped {pad} bytes padding.");
-				
+
 				// optional bone_links
 				if (info.WiAlloc > 0)
 				{
@@ -437,12 +468,10 @@ namespace redux.parsers
 					}
 					pad = (0x10L - (ms.Position % 0x10L)) % 0x10L;
 					if (pad > 0) r.ReadBytes((int)pad);
-					Logger.Debug(logSrc, $"        Read {numWeights} VertexBoneLinks, skipped {pad} bytes padding.");
 				}
 				else
 				{
 					cd.BoneLinks = Array.Empty<VertexBoneLink>();
-					Logger.Debug(logSrc, $"        No bone links (WiAlloc=0).");
 				}
 
 				// optional orig_map
@@ -520,9 +549,8 @@ namespace redux.parsers
 		private static void ParseBones(BinaryReader reader, Mesh mesh, int secSize)
 		{
 			long startPos = reader.BaseStream.Position;
-
 			int numBones = reader.ReadInt32();
-			Logger.Debug(logSrc, $"  → num_bones = {numBones}");
+			Logger.Debug(logSrc, $"  → numBones = {numBones}");
 
 			for (int i = 0; i < numBones; i++)
 			{
@@ -533,6 +561,7 @@ namespace redux.parsers
 				float qz = reader.ReadSingle();
 				float qw = reader.ReadSingle();
 				var baseRot = new Quaternion(qx, qy, qz, qw);
+				baseRot = Quaternion.Normalize(baseRot);
 
 				float tx = reader.ReadSingle();
 				float ty = reader.ReadSingle();
@@ -551,17 +580,13 @@ namespace redux.parsers
 				mesh.Bones.Add(bone);
 
 				Logger.Debug(logSrc,
-				  $"    Bone[{i}]: Name=\"{boneName}\", Parent={parentIndex}, " +
-				  $"Rot=({qx},{qy},{qz},{qw}), Trans=({tx},{ty},{tz})");
+					$"    Bone[{i}]: Name=\"{boneName}\", Parent={parentIndex}, Rot=({qx},{qy},{qz},{qw}), Trans=({tx},{ty},{tz})");
 			}
 
-			// Advance past any padding
-			long bytesConsumed = reader.BaseStream.Position - startPos;
-			long toSkip = secSize - bytesConsumed;
+			long consumed = reader.BaseStream.Position - startPos;
+			long toSkip = secSize - consumed;
 			if (toSkip > 0)
-			{
 				reader.BaseStream.Seek(toSkip, SeekOrigin.Current);
-			}
 		}
 	}
 }

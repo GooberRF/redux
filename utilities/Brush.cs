@@ -29,6 +29,9 @@ namespace redux.utilities
 		public string TextureName { get; set; }
 		public Solid Solid { get; set; }
 		public List<PropPoint> PropPoints { get; set; } = new List<PropPoint>();
+		public List<Vector4> JointIndices { get; set; }
+		public List<Vector4> JointWeights { get; set; }
+
 	}
 
 	public class Solid
