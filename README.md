@@ -12,13 +12,14 @@ Examples:
 - redux.exe -input mymesh.rfg -output mymesh.v3m
 - redux.exe -input dmpc03.rfl -output dmpc03.rfg -brushes -textranslate -swapitem "Medical Kit"
 
-Supported input formats:  
+Supported input formats:
 ------  
 - `RF Group (.rfg)`           Brushes from non‑moving groups
 - `RF1/RF2 Level (.rfl)`      Static geometry or brushes from non‑moving groups, most object types (if output is .rfg)
+- `RF Static Mesh (.v3m)`     Mesh with submeshes, LODs, prop points, and cspheres
 - `Wavefront OBJ (.obj)`      Geometry objects with flags in object names
 
-Supported output formats:  
+Supported output formats:
 ------  
 - `RF Group (.rfg)`           Brushes with flags (air, portal, detail, etc.), most object types (if input is .rfl)
 - `RF Static Mesh (.v3m)`     Mesh with submeshes for each brush/geometry object (basic support)
