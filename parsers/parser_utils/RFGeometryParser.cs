@@ -36,12 +36,12 @@ namespace redux.parsers.parser_utils
 			Logger.Dev(logSrc, $"Reading brush {brush.UID}");
 
 			// TBD - unsure on this approach. It fixes an error parsing RF2 l06s2.rfl but I'm not convinced this is the right way to do it
-			if (brush.UID == 1)
+			/*if (brush.UID == 1)
 			{
 				reader.BaseStream.Seek(-4, SeekOrigin.Current);
-				Logger.Dev(logSrc, "Detected either invalid brush or world static geometry inside brush section, skipping");
+				Logger.Warn(logSrc, "Detected either invalid brush or world static geometry inside brush section, skipping");
 				return null;
-			}
+			}*/
 
 			// Brush position
 			brush.Position = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
@@ -74,7 +74,23 @@ namespace redux.parsers.parser_utils
 
 			Logger.Dev(logSrc, $"Parsed brush {brush.UID} with {brush.Vertices.Count} verticies, {brush.UVs.Count} faces, flags {brush.Solid.Flags}, life {brush.Solid.Life}, and state {brush.Solid.State}");
 
-			return brush;
+			// if unk_c is set
+			// Unsure exactly what this flag is but brushes with it have a bunch of additional fields that need to be figured out
+			const uint UNK_C_MASK = 0x000C;      // bits 2+3
+			if ((brush.Solid.Flags & UNK_C_MASK) == UNK_C_MASK)
+			{
+				var unk1 = reader.ReadUInt32();
+				var unk2 = reader.ReadUInt32();
+				var unk3 = reader.ReadUInt32();
+				var unk4 = reader.ReadUInt32();
+				var unk5 = reader.ReadUInt32();
+				var unk6 = reader.ReadUInt32();
+				var unk7 = reader.ReadSingle();
+				var unk8 = reader.ReadByte();
+				Logger.Warn(logSrc, $"Brush {brush.UID} has unk_c flag set, read unk values: {unk1}, {unk2}, {unk3}, {unk4}, {unk5}, {unk6}, {unk7}, {unk8}");
+			}
+
+				return brush;
 		}
 		public static (List<Vector3> vertices, List<Vector2> uvs, List<Face> faces, List<int> indices, Solid solid) ReadGeometryBody(BinaryReader reader, int rfl_version, bool static_geo)
 		{
@@ -108,20 +124,33 @@ namespace redux.parsers.parser_utils
 					Logger.Debug(logSrc, $"Texture {i}: \"{tex}\" → \"{translatedTex}\"");
 					solid.Textures.Add(translatedTex);
 				}
+				else if (isRF2 && Config.InsertRF2TexturePrefix)
+				{
+					string translatedTex = RF2TextureTranslator.InsertRxPrefix(tex);
+					Logger.Debug(logSrc, $"Texture {i}: \"{tex}\" → \"{translatedTex}\"");
+					solid.Textures.Add(translatedTex);
+				}
 				else
 				{
 					Logger.Debug(logSrc, $"Texture {i}: \"{tex}\"");
 					solid.Textures.Add(tex);
 				}
 			}
-			
+
+			var faceScrollTable = new Dictionary<int, (float U, float V)>();
 			// Skip face scroll data (RF1 only)
 			if (isRF1 && rfl_version >= 0xB4)
 			{
 				int numFaceScrollData = reader.ReadInt32();
 				Logger.Debug(logSrc, $"numFaceScrollData: {numFaceScrollData}");
 				for (int i = 0; i < numFaceScrollData; i++)
-					reader.BaseStream.Seek(12, SeekOrigin.Current);
+				{
+					int faceId = reader.ReadInt32();
+					float uVel = reader.ReadSingle();
+					float vVel = reader.ReadSingle();
+					Logger.Dev(logSrc, $"Read face scroll → faceId={faceId}, U={uVel}, V={vVel}");
+					faceScrollTable[faceId] = (uVel, vVel);
+				}
 			}
 			else if (isRF1 && rfl_version < 0xB4)
 			{
@@ -138,11 +167,19 @@ namespace redux.parsers.parser_utils
 			{
 				if (isRF2)
 				{
-					int type = reader.ReadInt32();
+					int id = reader.ReadInt32();
 					Vector3 aabbMin = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
 					Vector3 aabbMax = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
-					int unk1 = reader.ReadInt32();
-					float unk2 = reader.ReadSingle();
+					//int unk1 = reader.ReadInt32();
+					byte byte1 = reader.ReadByte();
+					byte byte2 = reader.ReadByte();
+					byte byte3 = reader.ReadByte();
+					byte byte4 = reader.ReadByte();
+					//byte isLiquidRoom = reader.ReadByte();
+					//byte hasAmbientLight = reader.ReadByte();
+					//byte isSubroom = reader.ReadByte();
+					//byte hasAlpha = reader.ReadByte();
+					float life = reader.ReadSingle();
 					string eax_name = ReadVString(reader);
 					float unk3 = reader.ReadSingle();
 					float unk4 = reader.ReadSingle();
@@ -150,12 +187,14 @@ namespace redux.parsers.parser_utils
 					int unk6 = reader.ReadInt32();
 					float unk7 = reader.ReadSingle();
 					int unk8 = reader.ReadInt32();
+					//Logger.Warn(logSrc, $"byte1={byte1}, byte2={byte2}, byte3={byte3}, byte4={byte4}");
 
 					// pre-284 rfls have a conditional check here, but we don't have any of those so don't worry about it
 					float unk9 = reader.ReadSingle();
 					float unk10 = reader.ReadSingle();
 					float unk11 = reader.ReadSingle();
 					float unk12 = reader.ReadSingle();
+					//Logger.Debug(logSrc, $"unk3={unk3}, unk4={unk4}, unk5={unk5}, unk6={unk6}, unk7={unk7}, unk8={unk8}, unk9={unk9}, unk10={unk10}, unk11={unk11}, unk12={unk12}");
 				}
 				else
 				{
@@ -261,33 +300,39 @@ namespace redux.parsers.parser_utils
 
 				reader.BaseStream.Seek(16, SeekOrigin.Current);		// skip plane normal and dist
 				int textureIndex = reader.ReadInt32();				// texture index
-				reader.BaseStream.Seek(12, SeekOrigin.Current);     // unused data surface_index, face_id, unk
+				//reader.BaseStream.Seek(12, SeekOrigin.Current);     // unused data surface_index, face_id, unk
+
+				int surfaceIndex = reader.ReadInt32();
+				int faceId       = reader.ReadInt32();
+				int unk12        = reader.ReadInt32();
+
+				Logger.Debug(logSrc, $"RF1 Face {i} surfaceindex {surfaceIndex}, id {faceId}, unk12 {unk12}");
 
 				if (isRF1)
 				{
 					reader.ReadUInt32();							// reserved1 (RF1 only)
 					int portalIndex = reader.ReadInt32();			// portal_index (RF1 only)
-					uint faceFlagsRF1 = reader.ReadUInt16();		// RF1 faceFlags is a 16‐bit value
+					ushort faceFlagsRF1 = reader.ReadUInt16();		// RF1 faceFlags is a 16‐bit value
 					reader.ReadUInt16();							// reserved2 (RF1 only)
 					uint smoothingGroups = reader.ReadUInt32();
 					int roomIndex = reader.ReadInt32();
-					uint faceFlags32 = faceFlagsRF1;                // redux stores flags in a 32-bit structure to keep consistent with RF2
+					//uint faceFlags32 = faceFlagsRF1;                // redux stores flags in a 32-bit structure to keep consistent with RF2
 					int vertCount = reader.ReadInt32();
 
-					Logger.Debug(logSrc, $"RF1 face[{i}]: texture={textureIndex}, faceFlags=0x{faceFlagsRF1:X}  vertCount={vertCount}");
+					Logger.Debug(logSrc, $"RF1 face[{i}]: texture={textureIndex}, faceFlags=0x{faceFlagsRF1:X},  vertCount={vertCount}, smoothingGroups={smoothingGroups}");
 
 					var faceVerts = new List<int>(vertCount);
 					var faceUVs = new List<Vector2>(vertCount);
 
 					// set flag bools
-					bool isInvisible = (faceFlags32 & 0x2000) != 0;
-					bool isFullbright = (faceFlags32 & 0x20) != 0;
-					bool isHole = (faceFlags32 & 0x80) != 0;
-					bool isAlpha = (faceFlags32 & 0x40) != 0;
-					bool isDetail = (faceFlags32 & 0x0010) != 0;
-					bool isLiquid = (faceFlags32 & 0x04) != 0;
-					bool isPortal = (faceFlags32 & 0x1) != 0;
-					bool isSky = (faceFlags32 & 0x01) != 0;
+					bool isInvisible = (faceFlagsRF1 & 0x2000) != 0;
+					bool isFullbright = (faceFlagsRF1 & 0x20) != 0;
+					bool isHole = (faceFlagsRF1 & 0x80) != 0;
+					bool isAlpha = (faceFlagsRF1 & 0x40) != 0;
+					bool isDetail = (faceFlagsRF1 & 0x0010) != 0;
+					bool isLiquid = (faceFlagsRF1 & 0x04) != 0;
+					bool isPortal = (faceFlagsRF1 & 0x1) != 0;
+					bool isSky = (faceFlagsRF1 & 0x01) != 0;
 
 					for (int vi = 0; vi < vertCount; vi++)
 					{
@@ -329,7 +374,10 @@ namespace redux.parsers.parser_utils
 					if (!Config.IncludeLiquidFaces && isLiquid) continue;
 					if (!Config.IncludePortalFaces && isPortal) continue;
 					if (!Config.IncludeSkyFaces && isSky) continue;
-					
+
+					// Lookup scroll speeds from the dictionary (default to (0,0) if not found)
+					faceScrollTable.TryGetValue(faceId, out var scrollUV);
+
 					// Triangulate or add ngon faces
 					if (Config.TriangulatePolygons && faceVerts.Count > 3)
 					{
@@ -339,8 +387,12 @@ namespace redux.parsers.parser_utils
 							solid.Faces.Add(new Face
 							{
 								TextureIndex = textureIndex,
+								FaceId = faceId,
+								ScrollU = scrollUV.U,
+								ScrollV = scrollUV.V,
 								Vertices = new List<int> { faceVerts[0], faceVerts[k], faceVerts[k + 1] },
 								UVs = new List<Vector2> { faceUVs[0], faceUVs[k], faceUVs[k + 1] },
+								SmoothingGroups = smoothingGroups,
 								FaceFlags = (ushort)faceFlagsRF1
 							});
 						}
@@ -350,13 +402,17 @@ namespace redux.parsers.parser_utils
 						solid.Faces.Add(new Face
 						{
 							TextureIndex = textureIndex,
+							FaceId = faceId,
+							ScrollU = scrollUV.U,
+							ScrollV = scrollUV.V,
 							Vertices = faceVerts,
 							UVs = faceUVs,
+							SmoothingGroups = smoothingGroups,
 							FaceFlags = (ushort)faceFlagsRF1
 						});
 					}
 
-				}
+				} // end RF1
 				else
 				{
 					uint faceFlagsRF2 = reader.ReadUInt32();
@@ -383,11 +439,16 @@ namespace redux.parsers.parser_utils
 						}
 					}
 
-					reader.ReadUInt32();                                                    // room index
+					//reader.ReadUInt32();                                                    // room index
+
+					int roomIndex = reader.ReadInt32();
+					//int faceId2 = reader.ReadInt32();
+					//reader.ReadInt32();  // reserved
+					//reader.ReadInt32();  // reserved
 
 					int vertCount = reader.ReadInt32();
 
-					Logger.Debug(logSrc, $"RF2 face[{i}]: texture={textureIndex}, faceFlags=0x{faceFlagsRF2:X}, vertCount={vertCount}");
+					Logger.Debug(logSrc, $"RF2 face[{i}]: faceid2={faceId}, texture={textureIndex}, faceFlags=0x{faceFlagsRF2:X}, vertCount={vertCount}, smoothingGroups={smoothingGroups}");
 
 					var faceVerts = new List<int>(vertCount);
 					var faceUVs = new List<Vector2>(vertCount);
@@ -436,6 +497,8 @@ namespace redux.parsers.parser_utils
 					if (!Config.IncludePortalFaces && isPortal) continue;
 					if (!Config.IncludeSkyFaces && isSky) continue;
 
+					faceScrollTable.TryGetValue(faceId, out var scrollUV2);
+
 					// Triangulate or add polygon faces for RF2
 					if (Config.TriangulatePolygons && faceVerts.Count > 3)
 					{
@@ -445,8 +508,12 @@ namespace redux.parsers.parser_utils
 							solid.Faces.Add(new Face
 							{
 								TextureIndex = textureIndex,
+								FaceId = faceId,
+								ScrollU = scrollUV2.U,
+								ScrollV = scrollUV2.V,
 								Vertices = new List<int> { faceVerts[0], faceVerts[k], faceVerts[k + 1] },
 								UVs = new List<Vector2> { faceUVs[0], faceUVs[k], faceUVs[k + 1] },
+								SmoothingGroups = smoothingGroups,
 								FaceFlags = (ushort)(faceFlagsRF2 & 0xFFFF)	// cast to ushort for storage
 							});
 						}
@@ -456,12 +523,16 @@ namespace redux.parsers.parser_utils
 						solid.Faces.Add(new Face
 						{
 							TextureIndex = textureIndex,
+							FaceId = faceId,
+							ScrollU = scrollUV2.U,
+							ScrollV = scrollUV2.V,
 							Vertices = faceVerts,
 							UVs = faceUVs,
+							SmoothingGroups = smoothingGroups,
 							FaceFlags = (ushort)(faceFlagsRF2 & 0xFFFF)
 						});
 					}
-				}
+				} // end RF2
 
 				long faceEnd = reader.BaseStream.Position;
 				Logger.Debug(logSrc, $"Face {i} consumed {(faceEnd - faceStart)} bytes");

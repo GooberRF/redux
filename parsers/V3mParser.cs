@@ -2,6 +2,7 @@
 using redux.utilities;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Text;
@@ -15,14 +16,14 @@ namespace redux.parsers
 	{
 		private const string logSrc = "V3mParser";
 
-		private const int V3M_SIGNATURE = 0x52463344;	// 'RF3D'
-		private const int V3C_SIGNATURE = 0x5246434D;	// 'RFCM'
+		private const int V3M_SIGNATURE = 0x52463344;    // 'RF3D'
+		private const int V3C_SIGNATURE = 0x5246434D;    // 'RFCM'
 		private const int V3D_VERSION = 0x40000;
 
 		private const int SECTION_END = 0x00000000;
 		private const int SECTION_SUBMESH = 0x5355424D; // 'SUBM'
 		private const int SECTION_CSPHERE = 0x43535048; // 'CSPH'
-		private const int SECTION_BONES = 0x424F4E45;	// 'BONE'
+		private const int SECTION_BONES = 0x424F4E45; // 'BONE'
 
 		public static Mesh ReadV3mAsRflMesh(string path)
 		{
@@ -71,7 +72,7 @@ namespace redux.parsers
 				}
 				else if (secType == SECTION_SUBMESH)
 				{
-					Logger.Debug(logSrc, "Found SUBMESH section; parsing submesh → multiple LOD‑Brushes");
+					Logger.Debug(logSrc, "Found SUBMESH section; parsing submesh → multiple LOD-Brushes");
 					var lodBrushes = ParseSubmeshAsBrushes(reader);
 					foreach (var b in lodBrushes)
 					{
@@ -89,6 +90,8 @@ namespace redux.parsers
 				{
 					Logger.Debug(logSrc, "Found BONES section; parsing skeleton.");
 					ParseBones(reader, mesh, secSize);
+					ComputeBoneWorldPositions(mesh);
+					NormalizeBonePositions(mesh);
 				}
 				else
 				{
@@ -190,7 +193,6 @@ namespace redux.parsers
 				var uvs = new List<Vector2>();
 				var faces = new List<Face>();
 				var indices = new List<int>();
-
 				var jointIndices = new List<Vector4>();
 				var jointWeights = new List<Vector4>();
 
@@ -235,14 +237,13 @@ namespace redux.parsers
 						}
 					}
 
-						for (int f = 0; f < chunkData.Triangles.Length; f++)
+					for (int f = 0; f < chunkData.Triangles.Length; f++)
 					{
 						var tri = chunkData.Triangles[f];
 						int i0 = baseIndex + tri.I0;
 						int i1 = baseIndex + tri.I1;
 						int i2 = baseIndex + tri.I2;
 						ushort ff = tri.Flags;
-
 						int textureIdx = lod.ChunkHeaders[ci];
 
 						var face = new Face
@@ -250,16 +251,15 @@ namespace redux.parsers
 							TextureIndex = textureIdx,
 							Vertices = new List<int> { i0, i1, i2 },
 							UVs = new List<Vector2>
-					{
-						uvs[baseIndex + tri.I0],
-						uvs[baseIndex + tri.I1],
-						uvs[baseIndex + tri.I2]
-					},
+							{
+								uvs[baseIndex + tri.I0],
+								uvs[baseIndex + tri.I1],
+								uvs[baseIndex + tri.I2]
+							},
 							FaceFlags = ff
 						};
 
 						faces.Add(face);
-
 						indices.Add(i0);
 						indices.Add(i1);
 						indices.Add(i2);
@@ -270,10 +270,10 @@ namespace redux.parsers
 				brush.UVs = uvs;
 				brush.Indices = indices;
 				brush.Solid.Faces = faces;
-					brush.JointIndices = jointIndices;
-					brush.JointWeights = jointWeights;
+				brush.JointIndices = jointIndices;
+				brush.JointWeights = jointWeights;
 
-					foreach (var matName in submeshMaterials)
+				foreach (var matName in submeshMaterials)
 					brush.Solid.Textures.Add(matName);
 
 				brushes.Add(brush);
@@ -288,7 +288,7 @@ namespace redux.parsers
 		private static LodMesh ParseLodMesh(BinaryReader reader)
 		{
 			Logger.Debug(logSrc, "  -> Entering ParseLodMesh(...)");
-			
+
 			var lod = new LodMesh();
 			lod.Flags = reader.ReadUInt32();
 			lod.NumVertices = reader.ReadInt32();
@@ -298,7 +298,6 @@ namespace redux.parsers
 			Logger.Debug(logSrc, $"    Flags=0x{lod.Flags:X8}, NumVertices={lod.NumVertices}, NumChunks={lod.NumChunks}, DataBlockSize={dataBlockSize}");
 
 			lod.DataBlock = reader.ReadBytes(dataBlockSize);
-
 			lod.Unknown1 = reader.ReadInt32();
 			Logger.Debug(logSrc, $"    Unknown1 = {lod.Unknown1}");
 
@@ -335,7 +334,7 @@ namespace redux.parsers
 				lod.Textures[t] = lt;
 				Logger.Debug(logSrc, $"    LodTexture[{t}]: Id={lt.Id}, Filename=\"{lt.Filename}\"");
 			}
-			
+
 			UnpackLodDataBlock(lod);
 
 			Logger.Debug(logSrc, "  <- Exiting ParseLodMesh(...)");
@@ -354,7 +353,7 @@ namespace redux.parsers
 				r.ReadBytes(0x20);
 				int texIdx = r.ReadInt32();
 				r.ReadBytes(0x14);
-				lod.ChunkHeaders[ci] = (texIdx);
+				lod.ChunkHeaders[ci] = texIdx;
 				Logger.Debug(logSrc, $"      ChunkHeader[{ci}] → textureIdx={texIdx}");
 			}
 
@@ -373,7 +372,7 @@ namespace redux.parsers
 				var cd = new ChunkData();
 
 				Logger.Debug(logSrc, $"      → Unpacking ChunkData[{ci}]: VecsAlloc={info.VecsAlloc}, UvsAlloc={info.UvsAlloc}, FacesAlloc={info.FacesAlloc}, SamePosOffsetAlloc={info.SamePosVertexOffsetsAlloc}, WiAlloc={info.WiAlloc}");
-				
+
 				// positions
 				int numPos = info.VecsAlloc / 12;
 				cd.Positions = new Vector3[numPos];
@@ -445,7 +444,6 @@ namespace redux.parsers
 					cd.SamePosVertexOffsets[i] = r.ReadInt16();
 				pad = (0x10L - (ms.Position % 0x10L)) % 0x10L;
 				if (pad > 0) r.ReadBytes((int)pad);
-
 				Logger.Debug(logSrc, $"        Read {numOffsets} same_pos offsets, skipped {pad} bytes padding.");
 
 				// optional bone_links
@@ -583,10 +581,81 @@ namespace redux.parsers
 					$"    Bone[{i}]: Name=\"{boneName}\", Parent={parentIndex}, Rot=({qx},{qy},{qz},{qw}), Trans=({tx},{ty},{tz})");
 			}
 
+			// Now compute and normalize RH‐corrected positions:
+			ComputeBoneWorldPositions(mesh);
+			NormalizeBonePositions(mesh);
+
 			long consumed = reader.BaseStream.Position - startPos;
 			long toSkip = secSize - consumed;
 			if (toSkip > 0)
 				reader.BaseStream.Seek(toSkip, SeekOrigin.Current);
+		}
+
+		public static void ComputeBoneWorldPositions(Mesh mesh)
+		{
+			int count = mesh.Bones.Count;
+			mesh.BoneWorldPositions = new Vector3[count];
+
+			for (int i = 0; i < count; i++)
+			{
+				Bone b = mesh.Bones[i];
+
+				// 1) Convert RF quaternion → RH quaternion by flipping X
+				// flip handedness
+				Quaternion q_rf = b.BaseRotation;
+				var q_rh = new Quaternion(
+					-q_rf.X,   // flip X
+					 q_rf.Y,
+					 q_rf.Z,
+					 q_rf.W
+				);
+				q_rh = Quaternion.Normalize(q_rh);
+
+				// 2) Convert RF translation → RH translation by flipping X
+				Vector3 t_rf = b.BaseTranslation;
+				var t_rh = new Vector3(
+					-t_rf.X,   // flip X
+					 t_rf.Y,
+					 t_rf.Z
+				);
+
+				// 3) Compute bone‐origin in world (RH) = -( R_rh^{-1} * t_rh )
+				//    Since R_rh is normalized, R_rh^{-1} == Quaternion.Conjugate(R_rh)
+				Quaternion invRot = Quaternion.Conjugate(q_rh);
+				Vector3 rotated = Vector3.Transform(t_rh, invRot);
+				Vector3 worldOrig = -rotated;
+
+				mesh.BoneWorldPositions[i] = worldOrig;
+			}
+		}
+
+		public static void NormalizeBonePositions(Mesh mesh)
+		{
+			// Find the root bone (ParentIndex < 0)
+			int rootIndex = -1;
+			for (int i = 0; i < mesh.Bones.Count; i++)
+			{
+				if (mesh.Bones[i].ParentIndex < 0)
+				{
+					rootIndex = i;
+					break;
+				}
+			}
+
+			if (rootIndex < 0)
+			{
+				Logger.Warn(logSrc, "No root bone found; skipping normalization.");
+				return;
+			}
+
+			Vector3 rootPos = mesh.BoneWorldPositions[rootIndex];
+			int count = mesh.Bones.Count;
+			mesh.BoneModelPositions = new Vector3[count];
+
+			for (int i = 0; i < count; i++)
+			{
+				mesh.BoneModelPositions[i] = mesh.BoneWorldPositions[i] - rootPos;
+			}
 		}
 	}
 }

@@ -16,6 +16,16 @@ namespace redux.utilities
 		public List<ParticleEmitter> ParticleEmitters { get; } = new();
 		public List<CollisionSphere> CollisionSpheres { get; } = new();
 		public List<Bone> Bones { get; } = new List<Bone>();
+		public Vector3[] BoneWorldPositions { get; set; }
+		public Vector3[] BoneModelPositions { get; set; }
+		public List<Lightmap> Lightmaps { get; set; } = new List<Lightmap>();
+		public List<WaypointList> WaypointLists { get; } = new();
+		public List<NavPoint> NavPoints { get; } = new();
+		public List<Decal> Decals { get; } = new List<Decal>();
+		public List<Brush> Movers { get; } = new List<Brush>();
+		public List<Group> Groups { get; } = new List<Group>();
+		public List<Clutter> Clutters { get; } = new List<Clutter>();
+		public List<Corona> Coronas { get; } = new List<Corona>();
 	}
 
 	public class Brush
@@ -24,6 +34,7 @@ namespace redux.utilities
 		public Vector3 Position { get; set; }
 		public Matrix4x4 RotationMatrix { get; set; } = Matrix4x4.Identity;
 		public List<Vector3> Vertices { get; set; } = new List<Vector3>();
+		public List<Vector3> Normals { get; set; } = new List<Vector3>();
 		public List<Vector2> UVs { get; set; } = new List<Vector2>();
 		public List<int> Indices { get; set; } = new List<int>();
 		public string TextureName { get; set; }
@@ -49,11 +60,12 @@ namespace redux.utilities
 		Portal =		0x00000001,
 		Air =			0x00000002,
 		Detail =		0x00000004,
+		unk_c =			0x0000000C, // RF2 only, something to do with liquid?
 		unk_08 =		0x00000008,
 		EmitsSteam =	0x00000010,
 		Geoable =		0x00000020, // RF2 only
 		unk_40 =		0x00000040, // RF2 only
-		unk_200 =		0x00000200  // RF2 only
+		unk_200 =		0x00000200  // RF2 only, used on AI geo helper brushes
 	}
 
 	public class Face
@@ -62,6 +74,15 @@ namespace redux.utilities
 		public List<Vector2> UVs { get; set; } = new();
 		public int TextureIndex { get; set; }
 		public ushort FaceFlags { get; set; }
+		public int LightmapResolution
+		{
+			get => (FaceFlags >> 8) & 0x3;
+			// (0 = lowest, 1 = low, 2 = high, 3 = highest)
+		}
+		public uint SmoothingGroups { get; set; }
+		public int FaceId { get; set; }
+		public float ScrollU { get; set; }
+		public float ScrollV { get; set; }
 		public Vector3 Normal { get; set; } = Vector3.UnitZ; // Default fallback
 		public bool HasHoles => (FaceFlags & 0x80) != 0;
 		public bool HasAlpha => (FaceFlags & 0x40) != 0;
@@ -258,7 +279,7 @@ namespace redux.utilities
 		public bool Disabled;
 		public float ButtonActiveTime;
 		public float InsideTime;
-		public TriggerTeam Team;
+		public TriggerTeam Team = TriggerTeam.None;
 		public List<int> Links;
 	}
 
@@ -492,4 +513,146 @@ namespace redux.utilities
 		public int Time { get; set; }
 		public Vector3[] Positions { get; set; }
 	}
+
+	public class Lightmap
+	{
+		public int Width { get; set; }
+		public int Height { get; set; }
+		public byte[] PixelData { get; set; }
+	}
+	public class WaypointList
+	{
+		public string Name { get; set; }
+		public List<int> WaypointIndices { get; set; } = new();
+	}
+	public class NavPoint
+	{
+		public int UID { get; set; }
+		public bool HiddenInEditor { get; set; }
+		public float Height { get; set; }
+		public Vector3 Position { get; set; }
+		public float Radius { get; set; }
+		public NavPointType Type { get; set; }
+		public bool Directional { get; set; }
+		public Matrix4x4? Rotation { get; set; } 
+		public bool Cover { get; set; }
+		public bool Hide { get; set; }
+		public bool Crunch { get; set; }
+		public float PauseTime { get; set; }
+		public List<int> LinkIndices { get; set; } = new();
+	}
+	public enum NavPointType : int
+	{
+		Walking = 0,
+		Flying = 1,
+	}
+
+	public class Decal
+	{
+		public int UID { get; set; }
+		public string ClassName { get; set; }
+		public Vector3 Position { get; set; }
+		public Matrix4x4 Rotation { get; set; }
+		public string ScriptName { get; set; }
+		public bool HiddenInEditor { get; set; }
+		public Vector3 Extents { get; set; }
+		public string Texture { get; set; }
+		public int Alpha { get; set; }
+		public bool SelfIlluminated { get; set; }
+		public int Tiling { get; set; }   // decal_tiling enum
+		public float Scale { get; set; }
+	}
+	public class Group
+	{
+		public string Name { get; set; }
+
+		public bool IsMoving { get; set; }
+
+		public MovingGroupData MovingData { get; set; }
+
+		public List<int> Objects { get; set; } = new List<int>();
+
+		public List<int> Brushes { get; set; } = new List<int>();
+	}
+	public class MovingGroupData
+	{
+		public List<Keyframe> Keyframes { get; } = new List<Keyframe>();
+		public List<MovingGroupMemberTransform> MemberTransforms { get; } = new List<MovingGroupMemberTransform>();
+
+		public bool IsDoor { get; set; }
+		public bool RotateInPlace { get; set; }
+		public bool StartsBackwards { get; set; }
+		public bool UseTravelTimeAsSpeed { get; set; }
+		public bool ForceOrient { get; set; }
+		public bool NoPlayerCollide { get; set; }
+
+		public int MovementType { get; set; }
+		public int StartingKeyframe { get; set; }
+
+		public string StartSound { get; set; }
+		public float StartVol { get; set; }
+
+		public string LoopingSound { get; set; }
+		public float LoopingVol { get; set; }
+
+		public string StopSound { get; set; }
+		public float StopVol { get; set; }
+
+		public string CloseSound { get; set; }
+		public float CloseVol { get; set; }
+	}
+	public class Keyframe
+	{
+		public int UID { get; set; }
+		public Vector3 Pos { get; set; }
+		public Matrix4x4 Rot { get; set; }
+		public string ScriptName { get; set; }
+		public bool HiddenInEditor { get; set; }
+		public float PauseTime { get; set; }
+		public float DepartTravelTime { get; set; }
+		public float ReturnTravelTime { get; set; }
+		public float AccelTime { get; set; }
+		public float DecelTime { get; set; }
+		public int EventUID { get; set; }
+		public int ItemUID1 { get; set; }
+		public int ItemUID2 { get; set; }
+		public float DegreesAboutAxis { get; set; }
+	}
+	public class MovingGroupMemberTransform
+	{
+		public int UID { get; set; }
+		public Vector3 Pos { get; set; }
+		public Matrix4x4 Rot { get; set; }
+	}
+
+	public class Clutter
+	{
+		public int UID { get; set; }
+		public string ClassName { get; set; }
+		public Vector3 Position { get; set; }
+		public Matrix4x4 Rotation { get; set; }
+		public string ScriptName { get; set; }
+		public bool HiddenInEditor { get; set; }
+		public string Skin { get; set; }
+		public List<int> Links { get; set; }
+	}
+
+	public class Corona
+	{
+		public int UID;
+		public string Name;
+		public string ScriptName;
+		public Vector3 Position;
+		public Vector4 Color { get; set; } // RGBA
+		public float ConeAngle;
+		public float Intensity;
+		public float RadiusDistance;
+		public float RadiusScale;
+		public float DiminishDistance;
+		public float VolumetricHeight;
+		public float VolumetricLength;
+		public string CoronaBitmap;
+		public string VolumetricBitmap;
+	}
+
 }
