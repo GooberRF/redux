@@ -7,9 +7,9 @@ using System.Numerics;
 
 namespace redux.exporters
 {
-	public static class RfgExporter
-	{
-		private const string logSrc = "RfgExporter";
+    public static class RfgExporter
+    {
+        private const string logSrc = "RfgExporter";
 
         // Map RF "world axis" for positions/geometry so it matches rotation mirroring.
         // If you're seeing X behave like Z for positions, swap X<->Z here.
@@ -85,38 +85,38 @@ namespace redux.exporters
         }
 
         public static void ExportRfg(Mesh mesh, string outputPath)
-		{
-			Logger.Info(logSrc, $"Writing RFG to {outputPath}");
-			
-			using var stream = File.Create(outputPath);
-			using var writer = new BinaryWriter(stream);
+        {
+            Logger.Info(logSrc, $"Writing RFG to {outputPath}");
+            
+            using var stream = File.Create(outputPath);
+            using var writer = new BinaryWriter(stream);
 
-			writer.Write(0xD43DD00D); // Magic
-			writer.Write(0x0000012C); // Version
-			//writer.Write(1); // Num groups
+            writer.Write(0xD43DD00D); // Magic
+            writer.Write(0x0000012C); // Version
+            //writer.Write(1); // Num groups
 
-			int totalGroups = 1 + mesh.Groups.Count;
-			writer.Write(totalGroups);
+            int totalGroups = 1 + mesh.Groups.Count;
+            writer.Write(totalGroups);
 
-			//Utils.WriteVString(writer, "static_group");
-			//writer.Write((byte)0); // is_moving = false
+            //Utils.WriteVString(writer, "static_group");
+            //writer.Write((byte)0); // is_moving = false
 
-			var movingBrushUIDs = new HashSet<int>(
-				mesh.Groups.SelectMany(g => g.Brushes)
-			);
-			var staticBrushes = mesh.Brushes
-				.Where(b => !movingBrushUIDs.Contains(b.UID))
-				.ToList();
+            var movingBrushUIDs = new HashSet<int>(
+                mesh.Groups.SelectMany(g => g.Brushes)
+            );
+            var staticBrushes = mesh.Brushes
+                .Where(b => !movingBrushUIDs.Contains(b.UID))
+                .ToList();
 
-			// write the “static_group” header
-			Utils.WriteVString(writer, "static_group");
-			writer.Write((byte)0); // is_moving = false
+            // write the “static_group” header
+            Utils.WriteVString(writer, "static_group");
+            writer.Write((byte)0); // is_moving = false
 
-			// Fold coronas into clutter section if a clutter replacement name is specified (since RF1 doesn't have corona objects like RF2)
-			HandleCoronaClutterReplacements(mesh);
+            // Fold coronas into clutter section if a clutter replacement name is specified (since RF1 doesn't have corona objects like RF2)
+            HandleCoronaClutterReplacements(mesh);
 
-			// write only the filtered brushes
-			WriteBrushesSection(writer, staticBrushes);
+            // write only the filtered brushes
+            WriteBrushesSection(writer, staticBrushes);
 
             // Mirror settings for the static group
             bool mirrorActive = Config.GeoMirror != Config.MirrorAxis.None;
@@ -128,17 +128,17 @@ namespace redux.exporters
 
             writer.Write(0); // 0 geo regions
 
-			// Write lights section
-			Logger.Dev(logSrc, $"Writing lights: count={mesh.Lights.Count}");
-			writer.Write(mesh.Lights.Count);
-			foreach (var light in mesh.Lights)
-			{
-				Logger.Dev(logSrc, $"  → light UID={light.UID}, range={light.Range}, intensity={light.OnIntensity}");
+            // Write lights section
+            Logger.Dev(logSrc, $"Writing lights: count={mesh.Lights.Count}");
+            writer.Write(mesh.Lights.Count);
+            foreach (var light in mesh.Lights)
+            {
+                Logger.Dev(logSrc, $"  → light UID={light.UID}, range={light.Range}, intensity={light.OnIntensity}");
 
-				// UID
-				writer.Write(light.UID);
-				// class name
-				Utils.WriteVString(writer, light.ClassName);
+                // UID
+                writer.Write(light.UID);
+                // class name
+                Utils.WriteVString(writer, light.ClassName);
 
                 // position
                 var lightPos = mirrorActive ? MirrorPosAboutPivot(light.Position, posAxis, 0f) : light.Position;
@@ -147,126 +147,126 @@ namespace redux.exporters
                 // 3×3 rotation matrix
                 var R = mirrorActive ? MirrorRotationAboutOrigin(light.Rotation, Config.GeoMirror) : light.Rotation;
                 writer.Write(R.M11); writer.Write(R.M12); writer.Write(R.M13);
-				writer.Write(R.M21); writer.Write(R.M22); writer.Write(R.M23);
-				writer.Write(R.M31); writer.Write(R.M32); writer.Write(R.M33);
+                writer.Write(R.M21); writer.Write(R.M22); writer.Write(R.M23);
+                writer.Write(R.M31); writer.Write(R.M32); writer.Write(R.M33);
 
-				// script name
-				Utils.WriteVString(writer, light.ScriptName);
+                // script name
+                Utils.WriteVString(writer, light.ScriptName);
 
-				// hidden flag
-				writer.Write((byte)(light.HiddenInEditor ? 1 : 0));
+                // hidden flag
+                writer.Write((byte)(light.HiddenInEditor ? 1 : 0));
 
-				// raw bitflags
-				uint rawFlags = 0;
-				if (light.Dynamic) rawFlags |= 0x00000001;
-				if (light.Fade) rawFlags |= 0x00000002;
-				if (light.ShadowCasting) rawFlags |= 0x00000004;
-				if (light.IsEnabled) rawFlags |= 0x00000008;
-				rawFlags |= ((uint)light.Type & 0x3) << 4;
-				rawFlags |= ((uint)light.InitialState & 0xF) << 8;
-				if (light.RuntimeShadow) rawFlags |= 0x00002000;
-				writer.Write(rawFlags);
+                // raw bitflags
+                uint rawFlags = 0;
+                if (light.Dynamic) rawFlags |= 0x00000001;
+                if (light.Fade) rawFlags |= 0x00000002;
+                if (light.ShadowCasting) rawFlags |= 0x00000004;
+                if (light.IsEnabled) rawFlags |= 0x00000008;
+                rawFlags |= ((uint)light.Type & 0x3) << 4;
+                rawFlags |= ((uint)light.InitialState & 0xF) << 8;
+                if (light.RuntimeShadow) rawFlags |= 0x00002000;
+                writer.Write(rawFlags);
 
-				// color (RGBA bytes)
-				writer.Write((byte)(light.Color.X * 255));
-				writer.Write((byte)(light.Color.Y * 255));
-				writer.Write((byte)(light.Color.Z * 255));
-				writer.Write((byte)(light.Color.W * 255));
+                // color (RGBA bytes)
+                writer.Write((byte)(light.Color.X * 255));
+                writer.Write((byte)(light.Color.Y * 255));
+                writer.Write((byte)(light.Color.Z * 255));
+                writer.Write((byte)(light.Color.W * 255));
 
-				// floats
-				writer.Write(light.Range);
-				writer.Write(light.FOV);
-				writer.Write(light.FOVDropoff);
-				writer.Write(light.IntensityAtMaxRange);
+                // floats
+                writer.Write(light.Range);
+                writer.Write(light.FOV);
+                writer.Write(light.FOVDropoff);
+                writer.Write(light.IntensityAtMaxRange);
 
-				// dropoff type
-				writer.Write(light.DropoffType);
+                // dropoff type
+                writer.Write(light.DropoffType);
 
-				// tube width
-				writer.Write(light.TubeLightWidth);
+                // tube width
+                writer.Write(light.TubeLightWidth);
 
-				// on/off timing
-				writer.Write(light.OnIntensity);
-				writer.Write(light.OnTime);
-				writer.Write(light.OnTimeVariation);
-				writer.Write(light.OffIntensity);
-				writer.Write(light.OffTime);
-				writer.Write(light.OffTimeVariation);
-			}
+                // on/off timing
+                writer.Write(light.OnIntensity);
+                writer.Write(light.OnTime);
+                writer.Write(light.OnTimeVariation);
+                writer.Write(light.OffIntensity);
+                writer.Write(light.OffTime);
+                writer.Write(light.OffTimeVariation);
+            }
 
-			writer.Write(0); // 0 cutscene cameras
-			writer.Write(0); // 0 cutscene path nodes
-			writer.Write(0); // 0 ambient sounds
+            writer.Write(0); // 0 cutscene cameras
+            writer.Write(0); // 0 cutscene path nodes
+            writer.Write(0); // 0 ambient sounds
 
-			// Write events section
-			Logger.Dev(logSrc, $"Writing events: count={mesh.Events.Count}");
-			writer.Write(mesh.Events.Count);
-			foreach (var ev in mesh.Events)
-			{
-				Logger.Dev(logSrc, $"  → event UID={ev.UID}, type={ev.ClassName}");
+            // Write events section
+            Logger.Dev(logSrc, $"Writing events: count={mesh.Events.Count}");
+            writer.Write(mesh.Events.Count);
+            foreach (var ev in mesh.Events)
+            {
+                Logger.Dev(logSrc, $"  → event UID={ev.UID}, type={ev.ClassName}");
 
-				// UID
-				writer.Write(ev.UID);
+                // UID
+                writer.Write(ev.UID);
 
-				// class name
-				Utils.WriteVString(writer, ev.ClassName);
+                // class name
+                Utils.WriteVString(writer, ev.ClassName);
 
-				// position
-				writer.Write(ev.Position.X);
-				writer.Write(ev.Position.Y);
-				writer.Write(ev.Position.Z);
+                // position
+                writer.Write(ev.Position.X);
+                writer.Write(ev.Position.Y);
+                writer.Write(ev.Position.Z);
 
-				// script name
-				Utils.WriteVString(writer, ev.ScriptName);
+                // script name
+                Utils.WriteVString(writer, ev.ScriptName);
 
-				// hidden flag
-				writer.Write((byte)(ev.HiddenInEditor ? 1 : 0));
+                // hidden flag
+                writer.Write((byte)(ev.HiddenInEditor ? 1 : 0));
 
-				// delay
-				writer.Write(ev.Delay);
+                // delay
+                writer.Write(ev.Delay);
 
-				// two bools
-				writer.Write((byte)(ev.Bool1 ? 1 : 0));
-				writer.Write((byte)(ev.Bool2 ? 1 : 0));
+                // two bools
+                writer.Write((byte)(ev.Bool1 ? 1 : 0));
+                writer.Write((byte)(ev.Bool2 ? 1 : 0));
 
-				// two ints
-				writer.Write(ev.Int1);
-				writer.Write(ev.Int2);
+                // two ints
+                writer.Write(ev.Int1);
+                writer.Write(ev.Int2);
 
-				// two floats
-				writer.Write(ev.Float1);
-				writer.Write(ev.Float2);
+                // two floats
+                writer.Write(ev.Float1);
+                writer.Write(ev.Float2);
 
-				// two strings
-				Utils.WriteVString(writer, ev.Str1);
-				Utils.WriteVString(writer, ev.Str2);
+                // two strings
+                Utils.WriteVString(writer, ev.Str1);
+                Utils.WriteVString(writer, ev.Str2);
 
-				// links (uid_list)
-				writer.Write(ev.Links.Count);
-				foreach (var link in ev.Links)
-					writer.Write(link);
+                // links (uid_list)
+                writer.Write(ev.Links.Count);
+                foreach (var link in ev.Links)
+                    writer.Write(link);
 
-				// optional rotation
-				if (ev.HasRotation)
-				{
-					writer.Write(ev.Rotation.M11); writer.Write(ev.Rotation.M12); writer.Write(ev.Rotation.M13);
-					writer.Write(ev.Rotation.M21); writer.Write(ev.Rotation.M22); writer.Write(ev.Rotation.M23);
-					writer.Write(ev.Rotation.M31); writer.Write(ev.Rotation.M32); writer.Write(ev.Rotation.M33);
-				}
+                // optional rotation
+                if (ev.HasRotation)
+                {
+                    writer.Write(ev.Rotation.M11); writer.Write(ev.Rotation.M12); writer.Write(ev.Rotation.M13);
+                    writer.Write(ev.Rotation.M21); writer.Write(ev.Rotation.M22); writer.Write(ev.Rotation.M23);
+                    writer.Write(ev.Rotation.M31); writer.Write(ev.Rotation.M32); writer.Write(ev.Rotation.M33);
+                }
 
-				// color
-				writer.Write(ev.RawColor);
-			}
+                // color
+                writer.Write(ev.RawColor);
+            }
 
-			// Write MP respawn points section
-			Logger.Dev(logSrc, $"Writing MP respawn points: count={mesh.MPRespawnPoints.Count}");
-			writer.Write(mesh.MPRespawnPoints.Count);
-			foreach (var pt in mesh.MPRespawnPoints)
-			{
-				Logger.Dev(logSrc, $"  → MPSpawn UID={pt.UID}, Red={pt.RedTeam}, Blue={pt.BlueTeam}, Bot={pt.IsBot}");
+            // Write MP respawn points section
+            Logger.Dev(logSrc, $"Writing MP respawn points: count={mesh.MPRespawnPoints.Count}");
+            writer.Write(mesh.MPRespawnPoints.Count);
+            foreach (var pt in mesh.MPRespawnPoints)
+            {
+                Logger.Dev(logSrc, $"  → MPSpawn UID={pt.UID}, Red={pt.RedTeam}, Blue={pt.BlueTeam}, Bot={pt.IsBot}");
 
-				// UID
-				writer.Write(pt.UID);
+                // UID
+                writer.Write(pt.UID);
 
                 // Position
                 var ptPos = mirrorActive ? MirrorPosAboutPivot(pt.Position, posAxis, 0f) : pt.Position;
@@ -283,111 +283,111 @@ namespace redux.exporters
                 // Script name
                 Utils.WriteVString(writer, pt.ScriptName);
 
-				// Hidden flag
-				writer.Write((byte)(pt.HiddenInEditor ? 1 : 0));
+                // Hidden flag
+                writer.Write((byte)(pt.HiddenInEditor ? 1 : 0));
 
-				// Team ID
-				writer.Write(pt.TeamID);
+                // Team ID
+                writer.Write(pt.TeamID);
 
-				// Red/Blue/Bot flags
-				writer.Write((byte)(pt.RedTeam ? 1 : 0));
-				writer.Write((byte)(pt.BlueTeam ? 1 : 0));
-				writer.Write((byte)(pt.IsBot ? 1 : 0));
-			}
+                // Red/Blue/Bot flags
+                writer.Write((byte)(pt.RedTeam ? 1 : 0));
+                writer.Write((byte)(pt.BlueTeam ? 1 : 0));
+                writer.Write((byte)(pt.IsBot ? 1 : 0));
+            }
 
-			// --- nav points section ---
-			Logger.Dev(logSrc, $"Writing nav points: count={mesh.NavPoints.Count}");
-			writer.Write(mesh.NavPoints.Count);
-			for (int i = 0; i < mesh.NavPoints.Count; i++)
-			{
-				var np = mesh.NavPoints[i];
+            // --- nav points section ---
+            Logger.Dev(logSrc, $"Writing nav points: count={mesh.NavPoints.Count}");
+            writer.Write(mesh.NavPoints.Count);
+            for (int i = 0; i < mesh.NavPoints.Count; i++)
+            {
+                var np = mesh.NavPoints[i];
 
-				// log
-				Logger.Dev(logSrc,
-					$"  → NavPoint[{i}] " +
-					$"UID={np.UID}, HiddenInEditor={(np.HiddenInEditor ? 1 : 0)}, " +
-					$"Height={np.Height:F3}, Pos=({np.Position.X:F3},{np.Position.Y:F3},{np.Position.Z:F3}), " +
-					$"Radius={np.Radius:F3}, Type={(int)np.Type}, Directional={(np.Directional ? 1 : 0)}, " +
-					$"Cover={(np.Cover ? 1 : 0)}, Hide={(np.Hide ? 1 : 0)}, Crunch={(np.Crunch ? 1 : 0)}, " +
-					$"PauseTime={np.PauseTime:F3}, Links=[{string.Join(",", np.LinkIndices)}]"
-				);
+                // log
+                Logger.Dev(logSrc,
+                    $"  → NavPoint[{i}] " +
+                    $"UID={np.UID}, HiddenInEditor={(np.HiddenInEditor ? 1 : 0)}, " +
+                    $"Height={np.Height:F3}, Pos=({np.Position.X:F3},{np.Position.Y:F3},{np.Position.Z:F3}), " +
+                    $"Radius={np.Radius:F3}, Type={(int)np.Type}, Directional={(np.Directional ? 1 : 0)}, " +
+                    $"Cover={(np.Cover ? 1 : 0)}, Hide={(np.Hide ? 1 : 0)}, Crunch={(np.Crunch ? 1 : 0)}, " +
+                    $"PauseTime={np.PauseTime:F3}, Links=[{string.Join(",", np.LinkIndices)}]"
+                );
 
-				// UID
-				writer.Write(np.UID);
+                // UID
+                writer.Write(np.UID);
 
-				// hidden_in_editor (u1)
-				writer.Write((byte)(np.HiddenInEditor ? 1 : 0));
+                // hidden_in_editor (u1)
+                writer.Write((byte)(np.HiddenInEditor ? 1 : 0));
 
-				// height (f4)
-				writer.Write(np.Height);
+                // height (f4)
+                writer.Write(np.Height);
 
-				// position (vec3)
-				writer.Write(np.Position.X);
-				writer.Write(np.Position.Y);
-				writer.Write(np.Position.Z);
+                // position (vec3)
+                writer.Write(np.Position.X);
+                writer.Write(np.Position.Y);
+                writer.Write(np.Position.Z);
 
-				// radius (f4)
-				writer.Write(np.Radius);
+                // radius (f4)
+                writer.Write(np.Radius);
 
-				// type (s4)
-				writer.Write((int)np.Type);
+                // type (s4)
+                writer.Write((int)np.Type);
 
-				// directional (u1)
-				writer.Write((byte)(np.Directional ? 1 : 0));
+                // directional (u1)
+                writer.Write((byte)(np.Directional ? 1 : 0));
 
-				// if directional, 3×3 rotation matrix (forward, right, up)
-				if (np.Directional && np.Rotation.HasValue)
-				{
-					var R = np.Rotation.Value;
-					// forward = third row
-					writer.Write(R.M31); writer.Write(R.M32); writer.Write(R.M33);
-					// right   = first row
-					writer.Write(R.M11); writer.Write(R.M12); writer.Write(R.M13);
-					// up      = second row
-					writer.Write(R.M21); writer.Write(R.M22); writer.Write(R.M23);
-				}
+                // if directional, 3×3 rotation matrix (forward, right, up)
+                if (np.Directional && np.Rotation.HasValue)
+                {
+                    var R = np.Rotation.Value;
+                    // forward = third row
+                    writer.Write(R.M31); writer.Write(R.M32); writer.Write(R.M33);
+                    // right   = first row
+                    writer.Write(R.M11); writer.Write(R.M12); writer.Write(R.M13);
+                    // up      = second row
+                    writer.Write(R.M21); writer.Write(R.M22); writer.Write(R.M23);
+                }
 
-				// … after writing directional and optional rot …
+                // … after writing directional and optional rot …
 
-				// cover, hide, crunch (three u1s)
-				writer.Write((byte)(np.Cover ? 1 : 0));
-				writer.Write((byte)(np.Hide ? 1 : 0));
-				writer.Write((byte)(np.Crunch ? 1 : 0));
+                // cover, hide, crunch (three u1s)
+                writer.Write((byte)(np.Cover ? 1 : 0));
+                writer.Write((byte)(np.Hide ? 1 : 0));
+                writer.Write((byte)(np.Crunch ? 1 : 0));
 
-				// pause_time (f4)
-				writer.Write(np.PauseTime);
+                // pause_time (f4)
+                writer.Write(np.PauseTime);
 
-				// now the uid_list
-				writer.Write(np.LinkIndices.Count);
-				foreach (var link in np.LinkIndices)
-					writer.Write(link);
+                // now the uid_list
+                writer.Write(np.LinkIndices.Count);
+                foreach (var link in np.LinkIndices)
+                    writer.Write(link);
 
-			}
+            }
 
-			writer.Write(0); // 0 entities
+            writer.Write(0); // 0 entities
 
-			// Write items section
-			Logger.Dev(logSrc, $"Writing items: count={mesh.Items.Count}");
-			writer.Write(mesh.Items.Count);
-			foreach (var it in mesh.Items)
-			{
-				Logger.Dev(logSrc, $"  → item UID={it.UID}, class={it.ClassName}");
+            // Write items section
+            Logger.Dev(logSrc, $"Writing items: count={mesh.Items.Count}");
+            writer.Write(mesh.Items.Count);
+            foreach (var it in mesh.Items)
+            {
+                Logger.Dev(logSrc, $"  → item UID={it.UID}, class={it.ClassName}");
 
-				// UID
-				writer.Write(it.UID);
+                // UID
+                writer.Write(it.UID);
 
-				if (!string.IsNullOrEmpty(Config.ReplacementItemName))
-				{
-					Logger.Info(logSrc, $"Swapping item class for UID {it.UID} from {it.ClassName} to {Config.ReplacementItemName}");
-				}
+                if (!string.IsNullOrEmpty(Config.ReplacementItemName))
+                {
+                    Logger.Info(logSrc, $"Swapping item class for UID {it.UID} from {it.ClassName} to {Config.ReplacementItemName}");
+                }
 
-				// pick either the original or the override
-				var exportName = string.IsNullOrEmpty(Config.ReplacementItemName)
-					? it.ClassName
-					: Config.ReplacementItemName;
+                // pick either the original or the override
+                var exportName = string.IsNullOrEmpty(Config.ReplacementItemName)
+                    ? it.ClassName
+                    : Config.ReplacementItemName;
 
-				// class name (either original or override)
-				Utils.WriteVString(writer, exportName);
+                // class name (either original or override)
+                Utils.WriteVString(writer, exportName);
 
                 // position
                 var itPos = mirrorActive ? MirrorPosAboutPivot(it.Position, posAxis, 0f) : it.Position;
@@ -396,32 +396,32 @@ namespace redux.exporters
 
                 // 3×3 rotation matrix
                 var R = mirrorActive ? MirrorRotationAboutOrigin(it.Rotation, Config.GeoMirror) : it.Rotation;
-				writer.Write(R.M11); writer.Write(R.M12); writer.Write(R.M13);
-				writer.Write(R.M21); writer.Write(R.M22); writer.Write(R.M23);
-				writer.Write(R.M31); writer.Write(R.M32); writer.Write(R.M33);
+                writer.Write(R.M11); writer.Write(R.M12); writer.Write(R.M13);
+                writer.Write(R.M21); writer.Write(R.M22); writer.Write(R.M23);
+                writer.Write(R.M31); writer.Write(R.M32); writer.Write(R.M33);
 
-				// script name
-				Utils.WriteVString(writer, it.ScriptName);
+                // script name
+                Utils.WriteVString(writer, it.ScriptName);
 
-				// hidden flag
-				writer.Write((byte)(it.HiddenInEditor ? 1 : 0));
+                // hidden flag
+                writer.Write((byte)(it.HiddenInEditor ? 1 : 0));
 
-				// count, respawn time, team ID
-				writer.Write(it.Count);
-				writer.Write(it.RespawnTime);
-				writer.Write(it.TeamID);
-			}
+                // count, respawn time, team ID
+                writer.Write(it.Count);
+                writer.Write(it.RespawnTime);
+                writer.Write(it.TeamID);
+            }
 
-			// --- Clutters Section ---
-			Logger.Dev(logSrc, $"Writing clutters: count={mesh.Clutters.Count}");
-			writer.Write(mesh.Clutters.Count);
-			foreach (var c in mesh.Clutters)
-			{
-				// UID
-				writer.Write(c.UID);
+            // --- Clutters Section ---
+            Logger.Dev(logSrc, $"Writing clutters: count={mesh.Clutters.Count}");
+            writer.Write(mesh.Clutters.Count);
+            foreach (var c in mesh.Clutters)
+            {
+                // UID
+                writer.Write(c.UID);
 
-				// class_name
-				Utils.WriteVString(writer, c.ClassName);
+                // class_name
+                Utils.WriteVString(writer, c.ClassName);
 
                 var cPos = mirrorActive ? MirrorPosAboutPivot(c.Position, posAxis, 0f) : c.Position;
                 writer.Write(cPos.X);
@@ -440,58 +440,58 @@ namespace redux.exporters
                 // script_name
                 Utils.WriteVString(writer, c.ScriptName);
 
-				// hidden_in_editor flag
-				writer.Write((byte)(c.HiddenInEditor ? 1 : 0));
+                // hidden_in_editor flag
+                writer.Write((byte)(c.HiddenInEditor ? 1 : 0));
 
-				// the “unknown” int
-				//writer.Write(c.Unknown);
-				writer.Write(0);
+                // the “unknown” int
+                //writer.Write(c.Unknown);
+                writer.Write(0);
 
-				// skin
-				Utils.WriteVString(writer, c.Skin);
+                // skin
+                Utils.WriteVString(writer, c.Skin);
 
-				// links (uid_list)
-				writer.Write(c.Links.Count);
-				foreach (var link in c.Links)
-					writer.Write(link);
-			}
+                // links (uid_list)
+                writer.Write(c.Links.Count);
+                foreach (var link in c.Links)
+                    writer.Write(link);
+            }
 
 
-			// Write triggers section
-			Logger.Dev(logSrc, $"Writing triggers: count={mesh.Triggers.Count}");
-			writer.Write(mesh.Triggers.Count);
-			foreach (var trg in mesh.Triggers)
-			{
-				Logger.Dev(logSrc, $"  → trigger UID={trg.UID}, shape={trg.Shape}");
+            // Write triggers section
+            Logger.Dev(logSrc, $"Writing triggers: count={mesh.Triggers.Count}");
+            writer.Write(mesh.Triggers.Count);
+            foreach (var trg in mesh.Triggers)
+            {
+                Logger.Dev(logSrc, $"  → trigger UID={trg.UID}, shape={trg.Shape}");
 
-				// UID
-				writer.Write(trg.UID);
+                // UID
+                writer.Write(trg.UID);
 
-				// script name
-				Utils.WriteVString(writer, trg.ScriptName);
+                // script name
+                Utils.WriteVString(writer, trg.ScriptName);
 
-				// hidden flag
-				writer.Write((byte)(trg.HiddenInEditor ? 1 : 0));
+                // hidden flag
+                writer.Write((byte)(trg.HiddenInEditor ? 1 : 0));
 
-				// shape
-				writer.Write((int)trg.Shape);
+                // shape
+                writer.Write((int)trg.Shape);
 
-				// resets_after & resets_times
-				writer.Write(trg.ResetsAfter);
-				writer.Write(trg.ResetsTimes);
+                // resets_after & resets_times
+                writer.Write(trg.ResetsAfter);
+                writer.Write(trg.ResetsTimes);
 
-				// use key required + key name
-				writer.Write((byte)(trg.UseKeyRequired ? 1 : 0));
-				Utils.WriteVString(writer, trg.KeyName);
+                // use key required + key name
+                writer.Write((byte)(trg.UseKeyRequired ? 1 : 0));
+                Utils.WriteVString(writer, trg.KeyName);
 
-				// weapon activates + activated_by
-				writer.Write((byte)(trg.WeaponActivates ? 1 : 0));
-				writer.Write((byte)trg.ActivatedBy);
+                // weapon activates + activated_by
+                writer.Write((byte)(trg.WeaponActivates ? 1 : 0));
+                writer.Write((byte)trg.ActivatedBy);
 
-				// npc, auto, in_vehicle
-				writer.Write((byte)(trg.IsNpc ? 1 : 0));
-				writer.Write((byte)(trg.IsAuto ? 1 : 0));
-				writer.Write((byte)(trg.InVehicle ? 1 : 0));
+                // npc, auto, in_vehicle
+                writer.Write((byte)(trg.IsNpc ? 1 : 0));
+                writer.Write((byte)(trg.IsAuto ? 1 : 0));
+                writer.Write((byte)(trg.InVehicle ? 1 : 0));
 
                 // position (mirror about world origin if active)
                 var trgPos = mirrorActive ? MirrorPosAboutPivot(trg.Position, posAxis, 0f) : trg.Position;
@@ -501,11 +501,11 @@ namespace redux.exporters
 
                 // sphere vs box
                 if (trg.Shape == TriggerShape.Sphere)
-				{
-					writer.Write(trg.SphereRadius);
-				}
-				else
-				{
+                {
+                    writer.Write(trg.SphereRadius);
+                }
+                else
+                {
                     // rotation matrix (mirror in world if active)
                     var R = mirrorActive
                         ? MirrorRotationAboutOrigin(trg.Rotation, Config.GeoMirror)
@@ -522,43 +522,43 @@ namespace redux.exporters
                     writer.Write((byte)(trg.OneWay ? 1 : 0));
                 }
 
-				// room/link UIDs + disabled flag
-				writer.Write(trg.AirlockRoomUID);
-				writer.Write(trg.AttachedToUID);
-				writer.Write(trg.UseClutterUID);
-				writer.Write((byte)(trg.Disabled ? 1 : 0));
+                // room/link UIDs + disabled flag
+                writer.Write(trg.AirlockRoomUID);
+                writer.Write(trg.AttachedToUID);
+                writer.Write(trg.UseClutterUID);
+                writer.Write((byte)(trg.Disabled ? 1 : 0));
 
-				// timing
-				writer.Write(trg.ButtonActiveTime);
-				writer.Write(trg.InsideTime);
-				
-				// team
-				writer.Write((int)trg.Team);
+                // timing
+                writer.Write(trg.ButtonActiveTime);
+                writer.Write(trg.InsideTime);
+                
+                // team
+                writer.Write((int)trg.Team);
 
-				// links
-				writer.Write(trg.Links.Count);
-				foreach (var uid in trg.Links)
-					writer.Write(uid);
-			}
+                // links
+                writer.Write(trg.Links.Count);
+                foreach (var uid in trg.Links)
+                    writer.Write(uid);
+            }
 
-			writer.Write(0); // 0 particle emitters
-			writer.Write(0); // 0 gas regions
+            writer.Write(0); // 0 particle emitters
+            writer.Write(0); // 0 gas regions
 
 
-			//writer.Write(0); // 0 decals
+            //writer.Write(0); // 0 decals
 
-			// Write decals section
-			Logger.Dev(logSrc, $"Writing decals: count={mesh.Decals.Count}");
-			writer.Write(mesh.Decals.Count);
-			foreach (var dc in mesh.Decals)
-			{
-				Logger.Dev(logSrc, $"  → decal UID={dc.UID}, texture={dc.Texture}, scale={dc.Scale}");
+            // Write decals section
+            Logger.Dev(logSrc, $"Writing decals: count={mesh.Decals.Count}");
+            writer.Write(mesh.Decals.Count);
+            foreach (var dc in mesh.Decals)
+            {
+                Logger.Dev(logSrc, $"  → decal UID={dc.UID}, texture={dc.Texture}, scale={dc.Scale}");
 
-				// UID
-				writer.Write(dc.UID);
+                // UID
+                writer.Write(dc.UID);
 
-				// class name (“Decal”)
-				Utils.WriteVString(writer, dc.ClassName);
+                // class name (“Decal”)
+                Utils.WriteVString(writer, dc.ClassName);
 
                 // position
                 var dcPos = mirrorActive ? MirrorPosAboutPivot(dc.Position, posAxis, 0f) : dc.Position;
@@ -580,59 +580,59 @@ namespace redux.exporters
 
 
                 /*
-				// position
-				writer.Write(dc.Position.X);
-				writer.Write(dc.Position.Y);
-				writer.Write(dc.Position.Z);
+                // position
+                writer.Write(dc.Position.X);
+                writer.Write(dc.Position.Y);
+                writer.Write(dc.Position.Z);
 
-				// 3×3 rotation (forward, right, up)
-				var R = dc.Rotation;
-				// forward = third row
-				writer.Write(R.M31); writer.Write(R.M32); writer.Write(R.M33);
-				// right   = first row
-				writer.Write(R.M11); writer.Write(R.M12); writer.Write(R.M13);
-				// up      = second row
-				writer.Write(R.M21); writer.Write(R.M22); writer.Write(R.M23);
-				*/
+                // 3×3 rotation (forward, right, up)
+                var R = dc.Rotation;
+                // forward = third row
+                writer.Write(R.M31); writer.Write(R.M32); writer.Write(R.M33);
+                // right   = first row
+                writer.Write(R.M11); writer.Write(R.M12); writer.Write(R.M13);
+                // up      = second row
+                writer.Write(R.M21); writer.Write(R.M22); writer.Write(R.M23);
+                */
                 // script name
                 Utils.WriteVString(writer, dc.ScriptName);
 
-				// hidden flag
-				writer.Write((byte)(dc.HiddenInEditor ? 1 : 0));
+                // hidden flag
+                writer.Write((byte)(dc.HiddenInEditor ? 1 : 0));
 
-				// extents (vec3)
-				writer.Write(dc.Extents.X);
-				writer.Write(dc.Extents.Y);
-				writer.Write(dc.Extents.Z);
+                // extents (vec3)
+                writer.Write(dc.Extents.X);
+                writer.Write(dc.Extents.Y);
+                writer.Write(dc.Extents.Z);
 
-				// texture
-				Utils.WriteVString(writer, dc.Texture);
+                // texture
+                Utils.WriteVString(writer, dc.Texture);
 
-				// alpha (s4)
-				writer.Write(dc.Alpha);
+                // alpha (s4)
+                writer.Write(dc.Alpha);
 
-				// self_illuminated (u1)
-				writer.Write((byte)(dc.SelfIlluminated ? 1 : 0));
+                // self_illuminated (u1)
+                writer.Write((byte)(dc.SelfIlluminated ? 1 : 0));
 
-				// tiling (s4 enum)
-				writer.Write((int)dc.Tiling);
+                // tiling (s4 enum)
+                writer.Write((int)dc.Tiling);
 
-				// scale (f4)
-				writer.Write(dc.Scale);
-			}
+                // scale (f4)
+                writer.Write(dc.Scale);
+            }
 
-			// Write climbing regions section
-			Logger.Dev(logSrc, $"Writing climbing regions: count={mesh.ClimbingRegions.Count}");
-			writer.Write(mesh.ClimbingRegions.Count);
-			foreach (var cr in mesh.ClimbingRegions)
-			{
-				Logger.Dev(logSrc, $"  → climb UID={cr.UID}, type={cr.Type}, extents={cr.Extents}");
+            // Write climbing regions section
+            Logger.Dev(logSrc, $"Writing climbing regions: count={mesh.ClimbingRegions.Count}");
+            writer.Write(mesh.ClimbingRegions.Count);
+            foreach (var cr in mesh.ClimbingRegions)
+            {
+                Logger.Dev(logSrc, $"  → climb UID={cr.UID}, type={cr.Type}, extents={cr.Extents}");
 
-				// UID
-				writer.Write(cr.UID);
+                // UID
+                writer.Write(cr.UID);
 
-				// class name
-				Utils.WriteVString(writer, cr.ClassName);
+                // class name
+                Utils.WriteVString(writer, cr.ClassName);
 
                 // position
                 var crPos = mirrorActive ? MirrorPosAboutPivot(cr.Position, posAxis, 0f) : cr.Position;
@@ -656,35 +656,35 @@ namespace redux.exporters
                 // script name
                 Utils.WriteVString(writer, cr.ScriptName);
 
-				// hidden flag
-				writer.Write((byte)(cr.HiddenInEditor ? 1 : 0));
+                // hidden flag
+                writer.Write((byte)(cr.HiddenInEditor ? 1 : 0));
 
-				// region type
-				writer.Write(cr.Type);
+                // region type
+                writer.Write(cr.Type);
 
-				// extents
-				writer.Write(cr.Extents.X);
-				writer.Write(cr.Extents.Y);
-				writer.Write(cr.Extents.Z);
-			}
+                // extents
+                writer.Write(cr.Extents.X);
+                writer.Write(cr.Extents.Y);
+                writer.Write(cr.Extents.Z);
+            }
 
-			writer.Write(0); // 0 room effects
-			writer.Write(0); // 0 eax effects
-			writer.Write(0); // 0 bolt emitters
-			writer.Write(0); // 0 targets
+            writer.Write(0); // 0 room effects
+            writer.Write(0); // 0 eax effects
+            writer.Write(0); // 0 bolt emitters
+            writer.Write(0); // 0 targets
 
-			// Write push regions section
-			Logger.Dev(logSrc, $"Writing push regions: count={mesh.PushRegions.Count}");
-			writer.Write(mesh.PushRegions.Count);
-			foreach (var pr in mesh.PushRegions)
-			{
-				Logger.Dev(logSrc, $"  → push UID={pr.UID}, strength={pr.Strength}");
+            // Write push regions section
+            Logger.Dev(logSrc, $"Writing push regions: count={mesh.PushRegions.Count}");
+            writer.Write(mesh.PushRegions.Count);
+            foreach (var pr in mesh.PushRegions)
+            {
+                Logger.Dev(logSrc, $"  → push UID={pr.UID}, strength={pr.Strength}");
 
-				// UID
-				writer.Write(pr.UID);
+                // UID
+                writer.Write(pr.UID);
 
-				// class name
-				Utils.WriteVString(writer, pr.ClassName);
+                // class name
+                Utils.WriteVString(writer, pr.ClassName);
 
                 // position
                 var prPos = mirrorActive ? MirrorPosAboutPivot(pr.Position, posAxis, 0f) : pr.Position;
@@ -694,150 +694,150 @@ namespace redux.exporters
                 // 3×3 rotation matrix
                 var R = mirrorActive ? MirrorRotationAboutOrigin(pr.Rotation, Config.GeoMirror) : pr.Rotation;
                 writer.Write(R.M11); writer.Write(R.M12); writer.Write(R.M13);
-				writer.Write(R.M21); writer.Write(R.M22); writer.Write(R.M23);
-				writer.Write(R.M31); writer.Write(R.M32); writer.Write(R.M33);
+                writer.Write(R.M21); writer.Write(R.M22); writer.Write(R.M23);
+                writer.Write(R.M31); writer.Write(R.M32); writer.Write(R.M33);
 
-				// script name
-				Utils.WriteVString(writer, pr.ScriptName);
+                // script name
+                Utils.WriteVString(writer, pr.ScriptName);
 
-				// hidden flag
-				writer.Write((byte)(pr.HiddenInEditor ? 1 : 0));
+                // hidden flag
+                writer.Write((byte)(pr.HiddenInEditor ? 1 : 0));
 
-				// shape enum
-				writer.Write((int)pr.Shape);
+                // shape enum
+                writer.Write((int)pr.Shape);
 
-				// extents or radius
-				if (pr.Shape == PushRegionShape.Sphere)
-				{
-					writer.Write(pr.Radius);
-				}
-				else
-				{
-					writer.Write(pr.Extents.X);
-					writer.Write(pr.Extents.Y);
-					writer.Write(pr.Extents.Z);
-				}
+                // extents or radius
+                if (pr.Shape == PushRegionShape.Sphere)
+                {
+                    writer.Write(pr.Radius);
+                }
+                else
+                {
+                    writer.Write(pr.Extents.X);
+                    writer.Write(pr.Extents.Y);
+                    writer.Write(pr.Extents.Z);
+                }
 
-				// strength
-				writer.Write(pr.Strength);
+                // strength
+                writer.Write(pr.Strength);
 
-				// flags (16‑bit)
-				ushort rawFlags = 0;
-				if (pr.JumpPad) rawFlags |= 0x40;
-				if (pr.DoesntAffectPlayer) rawFlags |= 0x20;
-				if (pr.Radial) rawFlags |= 0x10;
-				if (pr.GrowsTowardsBoundary) rawFlags |= 0x08;
-				if (pr.GrowsTowardsCenter) rawFlags |= 0x04;
-				if (pr.Grounded) rawFlags |= 0x02;
-				if (pr.MassIndependent) rawFlags |= 0x01;
-				writer.Write(rawFlags);
+                // flags (16‑bit)
+                ushort rawFlags = 0;
+                if (pr.JumpPad) rawFlags |= 0x40;
+                if (pr.DoesntAffectPlayer) rawFlags |= 0x20;
+                if (pr.Radial) rawFlags |= 0x10;
+                if (pr.GrowsTowardsBoundary) rawFlags |= 0x08;
+                if (pr.GrowsTowardsCenter) rawFlags |= 0x04;
+                if (pr.Grounded) rawFlags |= 0x02;
+                if (pr.MassIndependent) rawFlags |= 0x01;
+                writer.Write(rawFlags);
 
-				// turbulence
-				writer.Write(pr.Turbulence);
-			}
+                // turbulence
+                writer.Write(pr.Turbulence);
+            }
 
 
-			//for (int i = 0; i < 22; i++)
-			//	writer.Write(0);
+            //for (int i = 0; i < 22; i++)
+            //  writer.Write(0);
 
-			// --- MOVING GROUPS ---
-			foreach (var grp in mesh.Groups)
-			{
-				// a) group_name
-				Utils.WriteVString(writer, grp.Name);
+            // --- MOVING GROUPS ---
+            foreach (var grp in mesh.Groups)
+            {
+                // a) group_name
+                Utils.WriteVString(writer, grp.Name);
 
-				// b) is_moving
-				writer.Write((byte)1);
+                // b) is_moving
+                writer.Write((byte)1);
 
-				// c) moving_data
-				var md = grp.MovingData;
-				// keyframes
-				writer.Write(md.Keyframes.Count);
-				foreach (var kf in md.Keyframes)
-				{
-					writer.Write(kf.UID);
-					writer.Write(kf.Pos.X); writer.Write(kf.Pos.Y); writer.Write(kf.Pos.Z);
-					// 3×3 rotation
-					writer.Write(kf.Rot.M11); writer.Write(kf.Rot.M12); writer.Write(kf.Rot.M13);
-					writer.Write(kf.Rot.M21); writer.Write(kf.Rot.M22); writer.Write(kf.Rot.M23);
-					writer.Write(kf.Rot.M31); writer.Write(kf.Rot.M32); writer.Write(kf.Rot.M33);
-					Utils.WriteVString(writer, kf.ScriptName);
-					writer.Write((byte)(kf.HiddenInEditor ? 1 : 0));
-					writer.Write(kf.PauseTime);
-					writer.Write(kf.DepartTravelTime);
-					writer.Write(kf.ReturnTravelTime);
-					writer.Write(kf.AccelTime);
-					writer.Write(kf.DecelTime);
-					writer.Write(kf.EventUID);
-					writer.Write(kf.ItemUID1);
-					writer.Write(kf.ItemUID2);
-					writer.Write(kf.DegreesAboutAxis);
-				}
-				// member transforms
-				writer.Write(md.MemberTransforms.Count);
-				foreach (var mt in md.MemberTransforms)
-				{
-					writer.Write(mt.UID);
-					writer.Write(mt.Pos.X); writer.Write(mt.Pos.Y); writer.Write(mt.Pos.Z);
-					writer.Write(mt.Rot.M11); writer.Write(mt.Rot.M12); writer.Write(mt.Rot.M13);
-					writer.Write(mt.Rot.M21); writer.Write(mt.Rot.M22); writer.Write(mt.Rot.M23);
-					writer.Write(mt.Rot.M31); writer.Write(mt.Rot.M32); writer.Write(mt.Rot.M33);
-				}
-				// flags & other scalar fields
-				writer.Write((byte)(md.IsDoor ? 1 : 0));
-				writer.Write((byte)(md.RotateInPlace ? 1 : 0));
-				writer.Write((byte)(md.StartsBackwards ? 1 : 0));
-				writer.Write((byte)(md.UseTravelTimeAsSpeed ? 1 : 0));
-				writer.Write((byte)(md.ForceOrient ? 1 : 0));
-				writer.Write((byte)(md.NoPlayerCollide ? 1 : 0));
-				writer.Write(md.MovementType);
-				writer.Write(md.StartingKeyframe);
-				Utils.WriteVString(writer, md.StartSound);
-				writer.Write(md.StartVol);
-				Utils.WriteVString(writer, md.LoopingSound);
-				writer.Write(md.LoopingVol);
-				Utils.WriteVString(writer, md.StopSound);
-				writer.Write(md.StopVol);
-				Utils.WriteVString(writer, md.CloseSound);
-				writer.Write(md.CloseVol);
+                // c) moving_data
+                var md = grp.MovingData;
+                // keyframes
+                writer.Write(md.Keyframes.Count);
+                foreach (var kf in md.Keyframes)
+                {
+                    writer.Write(kf.UID);
+                    writer.Write(kf.Pos.X); writer.Write(kf.Pos.Y); writer.Write(kf.Pos.Z);
+                    // 3×3 rotation
+                    writer.Write(kf.Rot.M11); writer.Write(kf.Rot.M12); writer.Write(kf.Rot.M13);
+                    writer.Write(kf.Rot.M21); writer.Write(kf.Rot.M22); writer.Write(kf.Rot.M23);
+                    writer.Write(kf.Rot.M31); writer.Write(kf.Rot.M32); writer.Write(kf.Rot.M33);
+                    Utils.WriteVString(writer, kf.ScriptName);
+                    writer.Write((byte)(kf.HiddenInEditor ? 1 : 0));
+                    writer.Write(kf.PauseTime);
+                    writer.Write(kf.DepartTravelTime);
+                    writer.Write(kf.ReturnTravelTime);
+                    writer.Write(kf.AccelTime);
+                    writer.Write(kf.DecelTime);
+                    writer.Write(kf.EventUID);
+                    writer.Write(kf.ItemUID1);
+                    writer.Write(kf.ItemUID2);
+                    writer.Write(kf.DegreesAboutAxis);
+                }
+                // member transforms
+                writer.Write(md.MemberTransforms.Count);
+                foreach (var mt in md.MemberTransforms)
+                {
+                    writer.Write(mt.UID);
+                    writer.Write(mt.Pos.X); writer.Write(mt.Pos.Y); writer.Write(mt.Pos.Z);
+                    writer.Write(mt.Rot.M11); writer.Write(mt.Rot.M12); writer.Write(mt.Rot.M13);
+                    writer.Write(mt.Rot.M21); writer.Write(mt.Rot.M22); writer.Write(mt.Rot.M23);
+                    writer.Write(mt.Rot.M31); writer.Write(mt.Rot.M32); writer.Write(mt.Rot.M33);
+                }
+                // flags & other scalar fields
+                writer.Write((byte)(md.IsDoor ? 1 : 0));
+                writer.Write((byte)(md.RotateInPlace ? 1 : 0));
+                writer.Write((byte)(md.StartsBackwards ? 1 : 0));
+                writer.Write((byte)(md.UseTravelTimeAsSpeed ? 1 : 0));
+                writer.Write((byte)(md.ForceOrient ? 1 : 0));
+                writer.Write((byte)(md.NoPlayerCollide ? 1 : 0));
+                writer.Write(md.MovementType);
+                writer.Write(md.StartingKeyframe);
+                Utils.WriteVString(writer, md.StartSound);
+                writer.Write(md.StartVol);
+                Utils.WriteVString(writer, md.LoopingSound);
+                writer.Write(md.LoopingVol);
+                Utils.WriteVString(writer, md.StopSound);
+                writer.Write(md.StopVol);
+                Utils.WriteVString(writer, md.CloseSound);
+                writer.Write(md.CloseVol);
 
-				// d) brushes (only those in this group)
-				var groupBrushes = mesh.Brushes
-					.FindAll(b => grp.Brushes.Contains(b.UID));
-				WriteBrushesSection(writer, groupBrushes);
+                // d) brushes (only those in this group)
+                var groupBrushes = mesh.Brushes
+                    .FindAll(b => grp.Brushes.Contains(b.UID));
+                WriteBrushesSection(writer, groupBrushes);
 
-				// e–end) all other sections empty
-				WriteEmptySection(writer); // geo_regions
-				WriteEmptySection(writer); // lights
-				WriteEmptySection(writer); // cutscene_cameras
-				WriteEmptySection(writer); // cutscene_path_nodes
-				WriteEmptySection(writer); // ambient_sounds
-				WriteEmptySection(writer); // events
-				WriteEmptySection(writer); // mp_respawn_points
-				writer.Write(0);          // num_nav_points
-				WriteEmptySection(writer); // entities
-				WriteEmptySection(writer); // items
-				WriteEmptySection(writer); // clutters
-				WriteEmptySection(writer); // triggers
-				WriteEmptySection(writer); // particle_emitters
-				WriteEmptySection(writer); // gas_regions
-				WriteEmptySection(writer); // decals
-				WriteEmptySection(writer); // climbing_regions
-				WriteEmptySection(writer); // room_effects
-				WriteEmptySection(writer); // eax_effects
-				WriteEmptySection(writer); // bolt_emitters
-				WriteEmptySection(writer); // targets
-				WriteEmptySection(writer); // push_regions
-			}
+                // e–end) all other sections empty
+                WriteEmptySection(writer); // geo_regions
+                WriteEmptySection(writer); // lights
+                WriteEmptySection(writer); // cutscene_cameras
+                WriteEmptySection(writer); // cutscene_path_nodes
+                WriteEmptySection(writer); // ambient_sounds
+                WriteEmptySection(writer); // events
+                WriteEmptySection(writer); // mp_respawn_points
+                writer.Write(0);          // num_nav_points
+                WriteEmptySection(writer); // entities
+                WriteEmptySection(writer); // items
+                WriteEmptySection(writer); // clutters
+                WriteEmptySection(writer); // triggers
+                WriteEmptySection(writer); // particle_emitters
+                WriteEmptySection(writer); // gas_regions
+                WriteEmptySection(writer); // decals
+                WriteEmptySection(writer); // climbing_regions
+                WriteEmptySection(writer); // room_effects
+                WriteEmptySection(writer); // eax_effects
+                WriteEmptySection(writer); // bolt_emitters
+                WriteEmptySection(writer); // targets
+                WriteEmptySection(writer); // push_regions
+            }
 
-			Logger.Info(logSrc, "RFG export complete.");
+            Logger.Info(logSrc, "RFG export complete.");
 
-		}
+        }
 
-		private static void WriteEmptySection(BinaryWriter writer)
-		{
-			writer.Write(0);
-		}
+        private static void WriteEmptySection(BinaryWriter writer)
+        {
+            writer.Write(0);
+        }
 
         /// <summary>
         /// Writes a brushes section to the RFG, using exactly the supplied brushes list.
@@ -1110,102 +1110,102 @@ namespace redux.exporters
         }
 
         public static void HandleCoronaClutterReplacements(Mesh mesh)
-		{
-			// 1) collect Corona UIDs
-			var coronaClutterUIDs = new List<int>();
-			if (!string.IsNullOrEmpty(Config.CoronaClutterName))
-			{
-				// 2) for each corona, add a Clutter
-				foreach (var c in mesh.Coronas)
-				{
-					coronaClutterUIDs.Add(c.UID);
+        {
+            // 1) collect Corona UIDs
+            var coronaClutterUIDs = new List<int>();
+            if (!string.IsNullOrEmpty(Config.CoronaClutterName))
+            {
+                // 2) for each corona, add a Clutter
+                foreach (var c in mesh.Coronas)
+                {
+                    coronaClutterUIDs.Add(c.UID);
 
-					mesh.Clutters.Add(new Clutter
-					{
-						UID = c.UID,
-						ClassName = Config.CoronaClutterName,
-						ScriptName = c.ScriptName,
-						Position = c.Position,
-						Rotation = Matrix4x4.Identity,
-						HiddenInEditor = false,
-						Skin = "",
-						Links = new List<int>()
-					});
-				}
+                    mesh.Clutters.Add(new Clutter
+                    {
+                        UID = c.UID,
+                        ClassName = Config.CoronaClutterName,
+                        ScriptName = c.ScriptName,
+                        Position = c.Position,
+                        Rotation = Matrix4x4.Identity,
+                        HiddenInEditor = false,
+                        Skin = "",
+                        Links = new List<int>()
+                    });
+                }
 
-				// 4) create the Unhide event (links → all new clutters)
-				int unhideEventUID = RflUtils.FindNextValidUID(mesh);
-				mesh.Events.Add(new RflEvent
-				{
-					UID = unhideEventUID,
-					ClassName = "Unhide",
-					ScriptName = "Unhide",
-					Position = Vector3.Zero + new Vector3(0, 3, 0),
-					HiddenInEditor = false,
-					Delay = 0f,
-					Bool1 = false,
-					Bool2 = false,
-					Int1 = 0,
-					Int2 = 0,
-					Float1 = 0f,
-					Float2 = 0f,
-					Str1 = "",
-					Str2 = "",
-					Links = new List<int>(coronaClutterUIDs),
-					RawColor = 0xFF00FFFF
-				});
+                // 4) create the Unhide event (links → all new clutters)
+                int unhideEventUID = RflUtils.FindNextValidUID(mesh);
+                mesh.Events.Add(new RflEvent
+                {
+                    UID = unhideEventUID,
+                    ClassName = "Unhide",
+                    ScriptName = "Unhide",
+                    Position = Vector3.Zero + new Vector3(0, 3, 0),
+                    HiddenInEditor = false,
+                    Delay = 0f,
+                    Bool1 = false,
+                    Bool2 = false,
+                    Int1 = 0,
+                    Int2 = 0,
+                    Float1 = 0f,
+                    Float2 = 0f,
+                    Str1 = "",
+                    Str2 = "",
+                    Links = new List<int>(coronaClutterUIDs),
+                    RawColor = 0xFF00FFFF
+                });
 
-				// 5) create the Route_Node event (links → Unhide)
-				int routeNodeEventUID = RflUtils.FindNextValidUID(mesh);
-				mesh.Events.Add(new RflEvent
-				{
-					UID = routeNodeEventUID,
-					ClassName = "Route_Node",
-					ScriptName = "Route_Node",
-					Position = Vector3.Zero + new Vector3(0, 2, 0),
-					HiddenInEditor = false,
-					Delay = 0f,
-					Bool1 = false,
-					Bool2 = false,
-					Int1 = 2, // invert
-					Int2 = 0,
-					Float1 = 0f,
-					Float2 = 0f,
-					Str1 = "",
-					Str2 = "",
-					Links = new List<int> { unhideEventUID },
-					RawColor = 0xFF00FFFF
-				});
+                // 5) create the Route_Node event (links → Unhide)
+                int routeNodeEventUID = RflUtils.FindNextValidUID(mesh);
+                mesh.Events.Add(new RflEvent
+                {
+                    UID = routeNodeEventUID,
+                    ClassName = "Route_Node",
+                    ScriptName = "Route_Node",
+                    Position = Vector3.Zero + new Vector3(0, 2, 0),
+                    HiddenInEditor = false,
+                    Delay = 0f,
+                    Bool1 = false,
+                    Bool2 = false,
+                    Int1 = 2, // invert
+                    Int2 = 0,
+                    Float1 = 0f,
+                    Float2 = 0f,
+                    Str1 = "",
+                    Str2 = "",
+                    Links = new List<int> { unhideEventUID },
+                    RawColor = 0xFF00FFFF
+                });
 
-				// 7) create the auto‐trigger (links → Route_Node)
-				int TriggerUID = RflUtils.FindNextValidUID(mesh);
-				mesh.Triggers.Add(new Trigger
-				{
-					UID = TriggerUID,
-					ScriptName = "Redux Trigger Auto",
-					HiddenInEditor = false,
-					Shape = TriggerShape.Sphere,
-					ResetsAfter = 0f,
-					ResetsTimes = -1,
-					UseKeyRequired = false,
-					KeyName = "",
-					WeaponActivates = false,
-					ActivatedBy = TriggerActivatedBy.AllObjects,
-					IsNpc = false,
-					IsAuto = true,
-					InVehicle = false,
-					Position = Vector3.Zero + new Vector3(0, 1, 0),
-					SphereRadius = 1f,
-					AirlockRoomUID = -1,
-					AttachedToUID = -1,
-					UseClutterUID = -1,
-					Disabled = false,
-					ButtonActiveTime = 0f,
-					InsideTime = 0f,
-					Team = TriggerTeam.None,
-					Links = new List<int> { routeNodeEventUID }
-				});
-			}
-		}
-	}
+                // 7) create the auto‐trigger (links → Route_Node)
+                int TriggerUID = RflUtils.FindNextValidUID(mesh);
+                mesh.Triggers.Add(new Trigger
+                {
+                    UID = TriggerUID,
+                    ScriptName = "Redux Trigger Auto",
+                    HiddenInEditor = false,
+                    Shape = TriggerShape.Sphere,
+                    ResetsAfter = 0f,
+                    ResetsTimes = -1,
+                    UseKeyRequired = false,
+                    KeyName = "",
+                    WeaponActivates = false,
+                    ActivatedBy = TriggerActivatedBy.AllObjects,
+                    IsNpc = false,
+                    IsAuto = true,
+                    InVehicle = false,
+                    Position = Vector3.Zero + new Vector3(0, 1, 0),
+                    SphereRadius = 1f,
+                    AirlockRoomUID = -1,
+                    AttachedToUID = -1,
+                    UseClutterUID = -1,
+                    Disabled = false,
+                    ButtonActiveTime = 0f,
+                    InsideTime = 0f,
+                    Team = TriggerTeam.None,
+                    Links = new List<int> { routeNodeEventUID }
+                });
+            }
+        }
+    }
 }
