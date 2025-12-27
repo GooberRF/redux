@@ -76,6 +76,7 @@ namespace redux.parsers.parser_utils
 
 			// if unk_c is set
 			// Unsure exactly what this flag is but brushes with it have a bunch of additional fields that need to be figured out
+			// in dmpc06.rfl this is set for liquid surfaces
 			const uint UNK_C_MASK = 0x000C;      // bits 2+3
 			if ((brush.Solid.Flags & UNK_C_MASK) == UNK_C_MASK)
 			{
@@ -84,10 +85,13 @@ namespace redux.parsers.parser_utils
 				var unk3 = reader.ReadUInt32();
 				var unk4 = reader.ReadUInt32();
 				var unk5 = reader.ReadUInt32();
-				var unk6 = reader.ReadUInt32();
-				var unk7 = reader.ReadSingle();
+				var unk6r = reader.ReadByte(); // probably a color
+                var unk6g = reader.ReadByte();
+                var unk6b = reader.ReadByte();
+                var unk6a = reader.ReadByte();
+                var unk7 = reader.ReadSingle();
 				var unk8 = reader.ReadByte();
-				Logger.Warn(logSrc, $"Brush {brush.UID} has unk_c flag set, read unk values: {unk1}, {unk2}, {unk3}, {unk4}, {unk5}, {unk6}, {unk7}, {unk8}");
+				Logger.Warn(logSrc, $"Brush {brush.UID} has unk_c flag set, read unk values: {unk1}, {unk2}, {unk3}, {unk4}, {unk5}, {unk6r},{unk6g},{unk6b},{unk6a}, {unk7}, {unk8}");
 			}
 
 				return brush;

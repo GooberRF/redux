@@ -1065,7 +1065,9 @@ namespace redux.exporters
                     writer.Write(face.TextureIndex);
                     writer.Write(-1); writer.Write(-1); writer.Write(-1); writer.Write(-1);
 
-                    writer.Write(face.SmoothingGroups);
+                    // smoothing groups isn't working currently. Writing out face.SmoothingGroups here breaks most brushes from RF2 RFLs
+                    //writer.Write(face.SmoothingGroups);
+                    writer.Write(0);
                     writer.Write(face.FaceFlags);
                     writer.Write((ushort)0);
                     writer.Write(0);
