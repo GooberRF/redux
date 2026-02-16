@@ -8,7 +8,7 @@ namespace redux
 {
     class Program
     {
-        private const string Version = "0.2.6";
+        private const string Version = "0.2.7";
         private const string logSrc = "REDUX";
         static void Main(string[] args)
         {
