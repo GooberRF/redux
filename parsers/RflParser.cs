@@ -1896,22 +1896,23 @@ namespace redux.parsers
                 uint unk1 = reader.ReadUInt32();
                 uint unk2 = reader.ReadUInt32();
                 float unk3 = reader.ReadSingle();
-                float unk4 = reader.ReadSingle();
+                float maybeAmbientScale = reader.ReadSingle();
                 float unk5 = reader.ReadSingle();
                 byte unk1R = reader.ReadByte(), unk1G = reader.ReadByte(), unk1B = reader.ReadByte(), unk1A = reader.ReadByte();
                 byte unk2R = reader.ReadByte(), unk2G = reader.ReadByte(), unk2B = reader.ReadByte(), unk2A = reader.ReadByte();
-                float unk6 = reader.ReadSingle();
-                SavedValues.maybeExposure = unk6 * 10.0f;
+                float maybeExposureRaw = reader.ReadSingle();
+                //SavedValues.maybeExposure = maybeAmbientScale * maybeExposureRaw * 5.0f;
+                SavedValues.maybeExposure = maybeExposureRaw * 5.0f;
 
                 Logger.Warn(logSrc, "Guesses at unknown RF2 level properties fields:");
                 Logger.Warn(logSrc, $"  Unk1 (flags?): 0x{unk1:X8}");
                 Logger.Warn(logSrc, $"  Unk2 (flags?): 0x{unk2:X8}");
                 Logger.Warn(logSrc, $"  maybeViewDistance: {unk3}");
-                Logger.Warn(logSrc, $"  maybeAmbientScale: {unk4}");
+                Logger.Warn(logSrc, $"  maybeAmbientScale: {maybeAmbientScale}");
                 Logger.Warn(logSrc, $"  maybeSunAngleDeg: {unk5}");
                 Logger.Warn(logSrc, $"  maybeSkyColorRGBA: [{unk1R},{unk1G},{unk1B},{unk1A}]");
                 Logger.Warn(logSrc, $"  maybeSkyColorAltRGBA: [{unk2R},{unk2G},{unk2B},{unk2A}]");
-                Logger.Warn(logSrc, $"  maybeExposure: {unk6}, light multiplier {SavedValues.maybeExposure}");
+                Logger.Warn(logSrc, $"  maybeExposure: {maybeExposureRaw}, light multiplier {SavedValues.maybeExposure}");
             }
 
             // now read everything until we hit sectionEnd
@@ -1939,6 +1940,7 @@ namespace redux.parsers
 
             for (int i = 0; i < numLights; i++)
             {
+                long lightStart = reader.BaseStream.Position;
                 var light = new Light();
 
                 light.UID = reader.ReadInt32();
@@ -1959,14 +1961,31 @@ namespace redux.parsers
                 light.ScriptName = ReadVString(reader);
                 light.HiddenInEditor = reader.ReadByte() != 0;
 
+                long rawFlagsOffset = reader.BaseStream.Position - lightStart;
                 uint rawFlags = reader.ReadUInt32();
                 light.Dynamic = (rawFlags & 0x1) != 0;
                 light.Fade = (rawFlags & 0x2) != 0;
                 light.ShadowCasting = (rawFlags & 0x4) != 0;
                 light.IsEnabled = (rawFlags & 0x8) != 0;
-                light.Type = (LightType)(rawFlags >> 4 & 0x3);
+                //light.Type = (LightType)(rawFlags >> 4 & 0x3);
+                /*int typeBits = rfl_version == 0x127
+                    ? (int)((rawFlags >> 5) & 0x3)
+                    : (int)((rawFlags >> 4) & 0x3);*/
+                int typeBits = (int)((rawFlags >> 4) & 0x3);
+                light.Type = rfl_version == 0x127
+                    ? typeBits switch
+                    {
+                        2 => LightType.Spot,
+                        3 => LightType.Tube,
+                        _ => (LightType)typeBits,
+                    }
+                    : (LightType)typeBits;
                 light.InitialState = (LightState)(rawFlags >> 8 & 0xF);
                 light.RuntimeShadow = (rawFlags & 0x2000) != 0;
+                Logger.Dev(logSrc,
+                    $"Light[{i}] flags=0x{rawFlags:X8} typeBits={(rawFlags >> 4) & 0x3} type={light.Type} " +
+                    $"dyn={light.Dynamic} fade={light.Fade} shadow={light.ShadowCasting} enabled={light.IsEnabled} " +
+                    $"init={(int)light.InitialState} runtimeShadow={light.RuntimeShadow}");
 
                 // RGBA
                 byte r = reader.ReadByte();
@@ -1990,7 +2009,7 @@ namespace redux.parsers
                 {
                     float I0 = reader.ReadSingle();     // the raw RF2 OnIntensity
                     light.OnIntensity = I0;
-                    light.Range *= 2;
+                    light.Range *= 1;
                     /*float R = light.Range;
                     switch (light.DropoffType)
                     {
@@ -2036,6 +2055,30 @@ namespace redux.parsers
                 light.OffTimeVariation = reader.ReadSingle();
 
                 lights.Add(light);
+
+                long lightEnd = reader.BaseStream.Position;
+                Logger.Dev(logSrc,
+                    $"Light[{i}] offset=0x{lightStart:X8}-0x{lightEnd:X8} " +
+                    $"len={lightEnd - lightStart} bytes rfl=0x{rfl_version:X} " +
+                    $"uid={light.UID} class={light.ClassName} script={light.ScriptName} hidden={light.HiddenInEditor} " +
+                    $"pos={light.Position} rot=({m00},{m01},{m02};{m10},{m11},{m12};{m20},{m21},{m22}) " +
+                    $"color={light.Color} range={light.Range} fov={light.FOV} fovDropoff={light.FOVDropoff} " +
+                    $"intMaxRange={light.IntensityAtMaxRange} dropoff={light.DropoffType} tubeWidth={light.TubeLightWidth} " +
+                    $"onIntensity={light.OnIntensity} onTime={light.OnTime} onVar={light.OnTimeVariation} " +
+                    $"offIntensity={light.OffIntensity} offTime={light.OffTime} offVar={light.OffTimeVariation}");
+                int lightLength = (int)(lightEnd - lightStart);
+                int dumpLength = Math.Min(lightLength, 64);
+                if (dumpLength > 0)
+                {
+                    var stream = reader.BaseStream;
+                    long savedPos = stream.Position;
+                    stream.Seek(lightStart, SeekOrigin.Begin);
+                    byte[] rawBytes = reader.ReadBytes(dumpLength);
+                    stream.Seek(savedPos, SeekOrigin.Begin);
+                    string rawHex = BitConverter.ToString(rawBytes).Replace("-", " ");
+                    Logger.Dev(logSrc,
+                        $"Light[{i}] raw[0..{dumpLength - 1}] ({dumpLength} bytes of {lightLength}): {rawHex}");
+                }
 
                 // (we leave reader at end of this light record)
                 Logger.Dev(logSrc,

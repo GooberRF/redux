@@ -333,7 +333,7 @@ namespace redux.parsers.parser_utils
                     bool isFullbright = (faceFlagsRF1 & 0x20) != 0;
                     bool isHole = (faceFlagsRF1 & 0x80) != 0;
                     bool isAlpha = (faceFlagsRF1 & 0x40) != 0;
-                    bool isDetail = (faceFlagsRF1 & 0x0010) != 0;
+                    bool isDetail = (faceFlagsRF1 & 0x0010) != 0; // scrolling
                     bool isLiquid = (faceFlagsRF1 & 0x04) != 0;
                     bool isPortal = (faceFlagsRF1 & 0x1) != 0;
                     bool isSky = (faceFlagsRF1 & 0x01) != 0;
@@ -422,34 +422,50 @@ namespace redux.parsers.parser_utils
                     uint faceFlagsRF2 = reader.ReadUInt32();
                     uint smoothingGroups = reader.ReadUInt32();
 
+                    Logger.Dev(logSrc, $"RF2 face[{i}] pre-flags: faceId={faceId}, texture={textureIndex}, faceFlags=0x{faceFlagsRF2:X8}, smoothingGroups=0x{smoothingGroups:X8}");
+
+                    string textureName = textureIndex >= 0 && textureIndex < solid.Textures.Count
+                        ? solid.Textures[textureIndex]
+                        : "<unknown>";
+                    float rf2ScrollU = 0f;
+                    float rf2ScrollV = 0f;
+                    bool hasRF2ScrollValues = false;
+
                     if ((faceFlagsRF2 & 0x8000) != 0)
                     {
-                        reader.ReadSingle();                                                // skip a float
-                        float tmp = reader.ReadSingle();
-                        if (Math.Abs(tmp - 1.0f) < 0.001f) faceFlagsRF2 |= 0x100000;
-                        else if (Math.Abs(tmp - 1.35f) < 0.001f) faceFlagsRF2 |= 0x200000;
-                        else if (Math.Abs(tmp - 1.5f) < 0.001f) faceFlagsRF2 |= 0x400000;
+                        float rf2ScrollU_tmp = reader.ReadSingle();
+                        float rf2ScrollV_tmp = reader.ReadSingle();
+                        Logger.Dev(logSrc, $"RF2 face[{i}] flag 0x8000 extra floats={rf2ScrollU_tmp}, {rf2ScrollV_tmp} (texture={textureIndex} {textureName})");
+
+                        //if ((faceFlagsRF2 & 0x10) != 0)
+                        //{
+                        rf2ScrollU = rf2ScrollU_tmp / 2;
+                        rf2ScrollV = rf2ScrollV_tmp / 2;
+                        hasRF2ScrollValues = true;
+                        //}
+
+                        // not sure if this stuff is actually needed or does anything?
+                        if (Math.Abs(rf2ScrollU_tmp - 1.0f) < 0.001f) faceFlagsRF2 |= 0x100000;
+                        else if (Math.Abs(rf2ScrollU_tmp - 1.35f) < 0.001f) faceFlagsRF2 |= 0x200000;
+                        else if (Math.Abs(rf2ScrollU_tmp - 1.5f) < 0.001f) faceFlagsRF2 |= 0x400000;
                         else faceFlagsRF2 |= 0x800000;
                     }
 
                     // ¯\_(ツ)_/¯
                     if (rfl_version >= 0x127)
                     {
-                        reader.BaseStream.Seek(3, SeekOrigin.Current);                      // skip 3 bytes
+                        byte unkByte0 = reader.ReadByte();
+                        byte unkByte1 = reader.ReadByte();
+                        byte unkByte2 = reader.ReadByte();
                         float flagDecider = reader.ReadSingle();
+                        Logger.Debug(logSrc, $"RF2 face[{i}] version>=0x127 extra bytes={unkByte0:X2} {unkByte1:X2} {unkByte2:X2}, flagDecider={flagDecider}");
                         if (Math.Abs(flagDecider) > 0.0001f)
                         {
                             faceFlagsRF2 |= 0x4000000;
                         }
                     }
 
-                    //reader.ReadUInt32();                                                    // room index
-
                     int roomIndex = reader.ReadInt32();
-                    //int faceId2 = reader.ReadInt32();
-                    //reader.ReadInt32();  // reserved
-                    //reader.ReadInt32();  // reserved
-
                     int vertCount = reader.ReadInt32();
 
                     Logger.Debug(logSrc, $"RF2 face[{i}]: faceid2={faceId}, texture={textureIndex}, faceFlags=0x{faceFlagsRF2:X}, vertCount={vertCount}, smoothingGroups={smoothingGroups}");
@@ -461,7 +477,7 @@ namespace redux.parsers.parser_utils
                     bool isFullbright = (faceFlagsRF2 & 0x20) != 0;
                     bool isHole = (faceFlagsRF2 & 0x80) != 0;
                     bool isAlpha = (faceFlagsRF2 & 0x40) != 0;
-                    bool isDetail = (faceFlagsRF2 & 0x0010) != 0;
+                    bool isDetail = (faceFlagsRF2 & 0x0010) != 0; // scroll texture
                     bool isLiquid = (faceFlagsRF2 & 0x04) != 0;
                     bool isPortal = (faceFlagsRF2 & 0x1) != 0;
                     bool isSky = (faceFlagsRF2 & 0x01) != 0;
@@ -502,6 +518,13 @@ namespace redux.parsers.parser_utils
                     if (!Config.IncludeSkyFaces && isSky) continue;
 
                     faceScrollTable.TryGetValue(faceId, out var scrollUV2);
+                    float scrollU = scrollUV2.U;
+                    float scrollV = scrollUV2.V;
+                    if (hasRF2ScrollValues)
+                    {
+                        scrollU = rf2ScrollU;
+                        scrollV = rf2ScrollV;
+                    }
 
                     // Triangulate or add polygon faces for RF2
                     if (Config.TriangulatePolygons && faceVerts.Count > 3)
@@ -513,8 +536,8 @@ namespace redux.parsers.parser_utils
                             {
                                 TextureIndex = textureIndex,
                                 FaceId = faceId,
-                                ScrollU = scrollUV2.U,
-                                ScrollV = scrollUV2.V,
+                                ScrollU = scrollU,
+                                ScrollV = scrollV,
                                 Vertices = new List<int> { faceVerts[0], faceVerts[k], faceVerts[k + 1] },
                                 UVs = new List<Vector2> { faceUVs[0], faceUVs[k], faceUVs[k + 1] },
                                 SmoothingGroups = smoothingGroups,
@@ -528,8 +551,8 @@ namespace redux.parsers.parser_utils
                         {
                             TextureIndex = textureIndex,
                             FaceId = faceId,
-                            ScrollU = scrollUV2.U,
-                            ScrollV = scrollUV2.V,
+                            ScrollU = scrollU,
+                            ScrollV = scrollV,
                             Vertices = faceVerts,
                             UVs = faceUVs,
                             SmoothingGroups = smoothingGroups,

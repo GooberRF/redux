@@ -963,7 +963,20 @@ namespace redux.exporters
                 Logger.Debug(logSrc, $"Brush {brush.UID} textures: {string.Join(", ", brush.Solid.Textures)}");
                 foreach (var tex in brush.Solid.Textures)
                     Utils.WriteVString(writer, tex);
-                writer.Write(0); writer.Write(0); writer.Write(0); writer.Write(0);
+
+                var scrollFaces = brush.Solid.Faces
+                    .Where(face => Math.Abs(face.ScrollU) > 0.0001f || Math.Abs(face.ScrollV) > 0.0001f)
+                    .ToList();
+                writer.Write(scrollFaces.Count);
+                foreach (var face in scrollFaces)
+                {
+                    writer.Write(face.FaceId);
+                    writer.Write(face.ScrollU);
+                    writer.Write(face.ScrollV);
+                }
+                writer.Write(0); // numRooms
+                writer.Write(0); // numSubroomLinks
+                writer.Write(0); // numPortals
 
                 // --- Bake world-axis mirror into LOCAL vertices: v' = R^T * A * R * v ---
                 // Build R^T
@@ -985,6 +998,9 @@ namespace redux.exporters
                     {
                         TextureIndex = face.TextureIndex,
                         FaceFlags = face.FaceFlags,
+                        FaceId = face.FaceId,
+                        //ScrollU = face.ScrollU,
+                        //ScrollV = face.ScrollV,
                         SmoothingGroups = face.SmoothingGroups,
                         Vertices = new List<int>(),
                         UVs = new List<Vector2>()
@@ -1063,7 +1079,11 @@ namespace redux.exporters
                     writer.Write(dist);
 
                     writer.Write(face.TextureIndex);
-                    writer.Write(-1); writer.Write(-1); writer.Write(-1); writer.Write(-1);
+
+                    writer.Write(-1);
+                    writer.Write(face.FaceId);
+                    writer.Write(-1);
+                    writer.Write(-1);
 
                     // smoothing groups isn't working currently. Writing out face.SmoothingGroups here breaks most brushes from RF2 RFLs
                     //writer.Write(face.SmoothingGroups);

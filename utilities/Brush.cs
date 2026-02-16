@@ -97,8 +97,10 @@ namespace redux.utilities
     }
     public enum LightType : byte
     {
-        Point = 0,
-        Spot = 1,
+        Undefined = 0,
+        Point = 1,
+        Spot = 2,
+        Tube = 3,
     }
 
     public enum LightState : byte
