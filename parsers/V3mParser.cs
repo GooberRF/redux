@@ -185,7 +185,8 @@ namespace redux.parsers
                     {
                         Name = pp.Name,
                         Position = pp.Position,
-                        Orientation = pp.Orientation
+                        Orientation = pp.Orientation,
+                        ParentIndex = pp.ParentIndex
                     });
                 }
 
@@ -221,12 +222,27 @@ namespace redux.parsers
                             float w1 = link.Weights[1] / 255f;
                             float w2 = link.Weights[2] / 255f;
                             float w3 = link.Weights[3] / 255f;
+                            float sum = w0 + w1 + w2 + w3;
+                            if (sum > 1e-6f)
+                            {
+                                w0 /= sum;
+                                w1 /= sum;
+                                w2 /= sum;
+                                w3 /= sum;
+                            }
+                            else
+                            {
+                                w0 = 1f;
+                                w1 = 0f;
+                                w2 = 0f;
+                                w3 = 0f;
+                            }
                             jointWeights.Add(new Vector4(w0, w1, w2, w3));
 
-                            float j0 = link.Bones[0];
-                            float j1 = link.Bones[1];
-                            float j2 = link.Bones[2];
-                            float j3 = link.Bones[3];
+                            float j0 = (link.Bones[0] == 0xFF || link.Weights[0] == 0) ? 0 : link.Bones[0];
+                            float j1 = (link.Bones[1] == 0xFF || link.Weights[1] == 0) ? 0 : link.Bones[1];
+                            float j2 = (link.Bones[2] == 0xFF || link.Weights[2] == 0) ? 0 : link.Bones[2];
+                            float j3 = (link.Bones[3] == 0xFF || link.Weights[3] == 0) ? 0 : link.Bones[3];
                             jointIndices.Add(new Vector4(j0, j1, j2, j3));
                         }
                         else
@@ -244,7 +260,8 @@ namespace redux.parsers
                         int i1 = baseIndex + tri.I1;
                         int i2 = baseIndex + tri.I2;
                         ushort ff = tri.Flags;
-                        int textureIdx = lod.ChunkHeaders[ci];
+                        int textureIdxRaw = lod.ChunkHeaders[ci];
+                        int textureIdx = ResolveChunkTextureIndex(textureIdxRaw, lod, submeshMaterials);
 
                         var face = new Face
                         {
@@ -283,6 +300,77 @@ namespace redux.parsers
 
             Logger.Debug(logSrc, "Exiting ParseSubmeshAsBrushes(...)");
             return brushes;
+        }
+
+        private static int ResolveChunkTextureIndex(int textureIdxRaw, LodMesh lod, List<string> submeshMaterials)
+        {
+            if (submeshMaterials.Count == 0)
+                return 0;
+
+            // Most files use chunk texture index as an index into LOD texture refs.
+            int slotFromDirectRef = ResolveTextureRefToMaterialSlot(textureIdxRaw, lod, submeshMaterials);
+            if (slotFromDirectRef >= 0)
+                return slotFromDirectRef;
+
+            // Some tools appear to store 1-based chunk texture indices.
+            int slotFromOneBasedRef = ResolveTextureRefToMaterialSlot(textureIdxRaw - 1, lod, submeshMaterials);
+            if (slotFromOneBasedRef >= 0)
+                return slotFromOneBasedRef;
+
+            // Fallbacks when chunk header points straight at material slots.
+            if (textureIdxRaw >= 0 && textureIdxRaw < submeshMaterials.Count)
+                return textureIdxRaw;
+            if (textureIdxRaw > 0 && (textureIdxRaw - 1) < submeshMaterials.Count)
+                return textureIdxRaw - 1;
+
+            Logger.Warn(logSrc, $"Unresolved chunk texture index {textureIdxRaw}; defaulting to material slot 0.");
+            return 0;
+        }
+
+        private static int ResolveTextureRefToMaterialSlot(int textureRefIndex, LodMesh lod, List<string> submeshMaterials)
+        {
+            if (lod.Textures == null || textureRefIndex < 0 || textureRefIndex >= lod.Textures.Length)
+                return -1;
+
+            LodTexture texRef = lod.Textures[textureRefIndex];
+
+            // In many files this is the direct 0-based material slot index.
+            int id = texRef.Id;
+            if (id >= 0 && id < submeshMaterials.Count)
+                return id;
+
+            // Some content appears to use 1-based IDs.
+            if (id > 0 && (id - 1) < submeshMaterials.Count)
+                return id - 1;
+
+            // As a final fallback, match by texture filename.
+            int byName = FindMaterialSlotByTextureName(texRef.Filename, submeshMaterials);
+            return byName;
+        }
+
+        private static int FindMaterialSlotByTextureName(string? textureName, List<string> submeshMaterials)
+        {
+            string wanted = NormalizeTextureName(textureName);
+            for (int i = 0; i < submeshMaterials.Count; i++)
+            {
+                string candidate = NormalizeTextureName(submeshMaterials[i]);
+                if (string.Equals(wanted, candidate, StringComparison.OrdinalIgnoreCase))
+                    return i;
+            }
+            return -1;
+        }
+
+        private static string NormalizeTextureName(string? textureName)
+        {
+            if (string.IsNullOrWhiteSpace(textureName))
+                return string.Empty;
+
+            string file = Path.GetFileName(textureName.Replace('\\', '/'));
+            if (string.IsNullOrWhiteSpace(file))
+                file = textureName;
+
+            string noExt = Path.GetFileNameWithoutExtension(file);
+            return noExt ?? string.Empty;
         }
 
         private static LodMesh ParseLodMesh(BinaryReader reader)

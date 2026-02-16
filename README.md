@@ -29,6 +29,9 @@ Supported output formats:
 ------  
 - `RF Group (.rfg)`                    Brushes with flags (air, portal, detail, etc.), most object types (from RFL, RFG, V3M, OBJ)
 - `RF Static Mesh (.v3m)`              Mesh with submeshes for each brush/geometry object (from RFG, V3M, OBJ)
+- `RF Character Mesh (.v3c)`           Character mesh with bones, vertex weights, and collision spheres
+- `glTF 2.0 (.gltf)`                   Blender-friendly mesh/skeleton export with collision spheres and optional RFA animation
+- `RF Animation (.rfa)`                Animation export/import (from RFA and glTF animation tracks)
 - `Wavefront OBJ (.obj)`               Geometry objects with flags in object names (from RFL, RFG, V3M, OBJ)
 - `Portable Network Graphics (.png)`   Image (extract from PEG)
 - `TARGA (.tga)`                       Image (extract from PEG)
@@ -39,6 +42,9 @@ Arguments:
 - `-outformat <file>`                  Output format.
 - `-itemswap <class>`                  Overwrite all item classes in exported RFGs with the specified item class.
 - `-coronaswap <class>`                Replace all RF2 coronas with clutter objects of the specified class when converting to RFG.
+- `-skeleton <file>`                   Skeleton mesh (.v3c/.v3m) when converting .rfa to .gltf
+- `-anim <file>`                       Embed an .rfa animation clip when exporting .gltf
+- `-animname <name>`                   Override embedded animation clip name in glTF
 - `-geomirror <X/Y/Z>`                 Mirror geometry and (most) objects across the provided global axis when converting to RFG.
 - `-flipnormals <bool>`                Flip face normals during conversion. Default: false
 - `-ngons <bool>`                      Allow n-sided polygons. If false, triangulate all polygons. Default: false

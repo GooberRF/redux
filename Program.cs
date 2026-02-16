@@ -25,6 +25,9 @@ namespace redux
 
             string inputFile = null;
             string outFormatArg = null;
+            string skeletonFile = null;
+            string animationFile = null;
+            string animationName = null;
 
             // Parse arguments:
             for (int i = 0; i < args.Length; i++)
@@ -76,6 +79,22 @@ namespace redux
                 else if (args[i].Equals("-coronaswap", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
                 {
                     Config.CoronaClutterName = args[++i];
+                }
+                else if ((args[i].Equals("-skeleton", StringComparison.OrdinalIgnoreCase) ||
+                          args[i].Equals("-skel", StringComparison.OrdinalIgnoreCase)) &&
+                         i + 1 < args.Length)
+                {
+                    skeletonFile = args[++i];
+                }
+                else if ((args[i].Equals("-anim", StringComparison.OrdinalIgnoreCase) ||
+                          args[i].Equals("-animation", StringComparison.OrdinalIgnoreCase)) &&
+                         i + 1 < args.Length)
+                {
+                    animationFile = args[++i];
+                }
+                else if (args[i].Equals("-animname", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    animationName = args[++i];
                 }
                 else
                 {
@@ -203,12 +222,18 @@ namespace redux
                 case "v3m":
                     desiredExt = ".v3m";
                     break;
+                case "v3c":
+                    desiredExt = ".v3c";
+                    break;
                 case "obj":
                     desiredExt = ".obj";
                     break;
-                /*case "gltf":
+                case "gltf":
                     desiredExt = ".gltf";
-                    break;*/
+                    break;
+                case "rfa":
+                    desiredExt = ".rfa";
+                    break;
                 case "tga":
                     Config.ExportImageFormat = Config.ImageFormat.tga;
                     extractTextures = true;
@@ -219,7 +244,7 @@ namespace redux
                     desiredExt = outFormatArg == "png" ? ".png" : ".tga";
                     break;
                 default:
-                    Logger.Error(logSrc, $"Unknown outformat “{outFormatArg}”. Valid: peg, rfg, v3m, obj, tga, png.");
+                    Logger.Error(logSrc, $"Unknown outformat “{outFormatArg}”. Valid: peg, rfg, v3m, v3c, obj, gltf, rfa, tga, png.");
                     return;
             }
 
@@ -267,6 +292,19 @@ namespace redux
                         var mesh = RfgParser.ReadRfg(inputFile);
                         V3mExporter.ExportV3m(mesh, outputFile);
                     }
+                    else if (desiredExt == ".v3c")
+                    {
+                        var mesh = RfgParser.ReadRfg(inputFile);
+                        V3mExporter.ExportV3m(mesh, outputFile, forceCharacterMesh: true);
+                    }
+                    else if (desiredExt == ".gltf")
+                    {
+                        var mesh = RfgParser.ReadRfg(inputFile);
+                        RfaFile anim = null;
+                        if (!string.IsNullOrWhiteSpace(animationFile))
+                            anim = RfaParser.ReadRfa(animationFile);
+                        GltfExporter.ExportGltf(mesh, outputFile, anim, animationName ?? Path.GetFileNameWithoutExtension(animationFile));
+                    }
                     else
                     {
                         Logger.Error(logSrc, $".rfg → {desiredExt} is not a valid conversion.");
@@ -280,11 +318,19 @@ namespace redux
                         var mesh = V3mParser.ReadV3mAsRflMesh(inputFile);
                         V3mExporter.ExportV3m(mesh, outputFile);
                     }
-                    /*else if (desiredExt == ".gltf")
+                    else if (desiredExt == ".v3c")
                     {
                         var mesh = V3mParser.ReadV3mAsRflMesh(inputFile);
-                        GltfExporter.ExportGltf(mesh, outputFile);
-                    }*/
+                        V3mExporter.ExportV3m(mesh, outputFile, forceCharacterMesh: true);
+                    }
+                    else if (desiredExt == ".gltf")
+                    {
+                        var mesh = V3mParser.ReadV3mAsRflMesh(inputFile);
+                        RfaFile anim = null;
+                        if (!string.IsNullOrWhiteSpace(animationFile))
+                            anim = RfaParser.ReadRfa(animationFile);
+                        GltfExporter.ExportGltf(mesh, outputFile, anim, animationName ?? Path.GetFileNameWithoutExtension(animationFile));
+                    }
                     else if (desiredExt == ".obj")
                     {
                         var mesh = V3mParser.ReadV3mAsRflMesh(inputFile);
@@ -308,11 +354,19 @@ namespace redux
                         var mesh = RfmParser.ReadRfm(inputFile);
                         V3mExporter.ExportV3m(mesh, outputFile);
                     }
-                    /*else if (desiredExt == ".gltf")
+                    else if (desiredExt == ".v3c")
                     {
                         var mesh = RfmParser.ReadRfm(inputFile);
-                        GltfExporter.ExportGltf(mesh, outputFile);
-                    }*/
+                        V3mExporter.ExportV3m(mesh, outputFile, forceCharacterMesh: true);
+                    }
+                    else if (desiredExt == ".gltf")
+                    {
+                        var mesh = RfmParser.ReadRfm(inputFile);
+                        RfaFile anim = null;
+                        if (!string.IsNullOrWhiteSpace(animationFile))
+                            anim = RfaParser.ReadRfa(animationFile);
+                        GltfExporter.ExportGltf(mesh, outputFile, anim, animationName ?? Path.GetFileNameWithoutExtension(animationFile));
+                    }
                     else if (desiredExt == ".obj")
                     {
                         var mesh = RfmParser.ReadRfm(inputFile);
@@ -345,6 +399,16 @@ namespace redux
                         var mesh = ObjParser.ReadObj(inputFile);
                         V3mExporter.ExportV3m(mesh, outputFile);
                     }
+                    else if (desiredExt == ".v3c")
+                    {
+                        var mesh = ObjParser.ReadObj(inputFile);
+                        V3mExporter.ExportV3m(mesh, outputFile, forceCharacterMesh: true);
+                    }
+                    else if (desiredExt == ".gltf")
+                    {
+                        var mesh = ObjParser.ReadObj(inputFile);
+                        GltfExporter.ExportGltf(mesh, outputFile, null, null);
+                    }
                     else
                     {
                         Logger.Error(logSrc, $".obj → {desiredExt} is not a valid conversion.");
@@ -367,6 +431,16 @@ namespace redux
                         var mesh = RflParser.ReadRfl(inputFile);
                         V3mExporter.ExportV3m(mesh, outputFile);
                     }
+                    else if (desiredExt == ".v3c")
+                    {
+                        var mesh = RflParser.ReadRfl(inputFile);
+                        V3mExporter.ExportV3m(mesh, outputFile, forceCharacterMesh: true);
+                    }
+                    else if (desiredExt == ".gltf")
+                    {
+                        var mesh = RflParser.ReadRfl(inputFile);
+                        GltfExporter.ExportGltf(mesh, outputFile, null, null);
+                    }
                     else
                     {
                         Logger.Error(logSrc, $".rfl → {desiredExt} is not a valid conversion.");
@@ -376,13 +450,67 @@ namespace redux
                 case ".rfa":
                     if (desiredExt == ".rfa")
                     {
-                        RfaParser.ReadRfa(inputFile);
+                        var anim = RfaParser.ReadRfa(inputFile);
+                        RfaExporter.ExportRfa(anim, outputFile);
+                    }
+                    else if (desiredExt == ".gltf")
+                    {
+                        if (string.IsNullOrWhiteSpace(skeletonFile) || !File.Exists(skeletonFile))
+                        {
+                            Logger.Error(logSrc, "Converting .rfa to .gltf requires -skeleton <v3c/v3m path>.");
+                            break;
+                        }
+
+                        var mesh = V3mParser.ReadV3mAsRflMesh(skeletonFile);
+                        var anim = RfaParser.ReadRfa(inputFile);
+                        GltfExporter.ExportGltf(mesh, outputFile, anim, animationName ?? Path.GetFileNameWithoutExtension(inputFile));
                     }
                     else
                     {
                         Logger.Error(logSrc, $".rfa → {desiredExt} is not a valid conversion.");
                     }
                     break;
+
+                case ".gltf":
+                    {
+                        var imported = GltfParser.ReadGltf(inputFile);
+                        if (desiredExt == ".v3m")
+                        {
+                            V3mExporter.ExportV3m(imported.Mesh, outputFile);
+                        }
+                        else if (desiredExt == ".v3c")
+                        {
+                            V3mExporter.ExportV3m(imported.Mesh, outputFile, forceCharacterMesh: true);
+                        }
+                        else if (desiredExt == ".obj")
+                        {
+                            ObjExporter.ExportObj(imported.Mesh, outputFile);
+                        }
+                        else if (desiredExt == ".rfg")
+                        {
+                            RfgExporter.ExportRfg(imported.Mesh, outputFile);
+                        }
+                        else if (desiredExt == ".rfa")
+                        {
+                            if (imported.Animation == null)
+                            {
+                                Logger.Error(logSrc, "No animation track found in glTF; cannot export .rfa.");
+                            }
+                            else
+                            {
+                                RfaExporter.ExportRfa(imported.Animation, outputFile);
+                            }
+                        }
+                        else if (desiredExt == ".gltf")
+                        {
+                            GltfExporter.ExportGltf(imported.Mesh, outputFile, imported.Animation, animationName ?? Path.GetFileNameWithoutExtension(inputFile));
+                        }
+                        else
+                        {
+                            Logger.Error(logSrc, $".gltf → {desiredExt} is not a valid conversion.");
+                        }
+                        break;
+                    }
 
                 default:
                     Logger.Error(logSrc, $"Unsupported input format “{inExt}.”");
@@ -406,14 +534,19 @@ namespace redux
             Console.WriteLine("  .rfl    (RF1/RF2 level)");
             Console.WriteLine("  .rfg    (RF group)");
             Console.WriteLine("  .v3m    (RF static mesh)");
+            Console.WriteLine("  .v3c    (RF character mesh)");
             Console.WriteLine("  .obj    (Wavefront OBJ)");
+            Console.WriteLine("  .gltf   (glTF 2.0)");
             Console.WriteLine("  .peg    (RF2 texture packfile)");
-            Console.WriteLine("  .rfa    (RF animation - read only)");
+            Console.WriteLine("  .rfa    (RF animation)");
             Console.WriteLine();
             Console.WriteLine("Supported output formats (specify with -outformat):");
             Console.WriteLine("  rfg     (RF group)");
             Console.WriteLine("  v3m     (RF static mesh)");
+            Console.WriteLine("  v3c     (RF character mesh)");
             Console.WriteLine("  obj     (Wavefront OBJ)");
+            Console.WriteLine("  gltf    (glTF 2.0)");
+            Console.WriteLine("  rfa     (RF animation)");
             Console.WriteLine("  tga     (extract textures from a .peg into .tga)");
             Console.WriteLine("  png     (extract textures from a .peg into .png)");
             Console.WriteLine();
@@ -424,6 +557,9 @@ namespace redux
             Console.WriteLine("Other options (boolean flags):");
             Console.WriteLine("  -loglevel <debug|dev|info|warn|error> - Set logging verbosity level (default info)");
             Console.WriteLine("  -swapitem <class> - Replace all items in exported .rfg with the specified class");
+            Console.WriteLine("  -skeleton <file> - Skeleton mesh (.v3c/.v3m) when converting .rfa to .gltf");
+            Console.WriteLine("  -anim <file> - Embed .rfa animation when exporting .gltf");
+            Console.WriteLine("  -animname <name> - Override embedded animation clip name");
             Console.WriteLine("  -brushes <true|false> - Export brush data from .rfl instead of static geometry (default false)");
             Console.WriteLine("  -ngons <true|false> - Allow n-sided polygons in output (default false)");
             Console.WriteLine("  -flipnormals <true|false> - Flip face normals during conversion (default false)");
