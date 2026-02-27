@@ -42,6 +42,7 @@ Arguments:
 - `-outformat <file>`                  Output format.
 - `-itemswap <class>`                  Overwrite all item classes in exported RFGs with the specified item class.
 - `-coronaswap <class>`                Replace all RF2 coronas with clutter objects of the specified class when converting to RFG.
+- `-rf2lightscale <float>`             RF2 light intensity scale factor. Default: 1.0
 - `-skeleton <file>`                   Skeleton mesh (.v3c/.v3m) when converting .rfa to .gltf
 - `-anim <file>`                       Embed an .rfa animation clip when exporting .gltf
 - `-animname <name>`                   Override embedded animation clip name in glTF

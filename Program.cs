@@ -8,7 +8,7 @@ namespace redux
 {
     class Program
     {
-        private const string Version = "0.2.7";
+        private const string Version = "0.2.8";
         private const string logSrc = "REDUX";
         static void Main(string[] args)
         {
@@ -567,7 +567,7 @@ namespace redux
             Console.WriteLine();
             Console.WriteLine("Other options (boolean flags):");
             Console.WriteLine("  -loglevel <debug|dev|info|warn|error> - Set logging verbosity level (default info)");
-            Console.WriteLine("  -swapitem <class> - Replace all items in exported .rfg with the specified class");
+            Console.WriteLine("  -itemswap <class> - Replace all items in exported .rfg with the specified class");
             Console.WriteLine("  -skeleton <file> - Skeleton mesh (.v3c/.v3m) when converting .rfa to .gltf");
             Console.WriteLine("  -anim <file> - Embed .rfa animation when exporting .gltf");
             Console.WriteLine("  -animname <name> - Override embedded animation clip name");
@@ -576,6 +576,7 @@ namespace redux
             Console.WriteLine("  -flipnormals <true|false> - Flip face normals during conversion (default false)");
             Console.WriteLine("  -geomirror <X|Y|Z> - Mirror geometry across the given global axis (RFG export only)");
             Console.WriteLine("  -simplenames <true|false> - Use simple Brush_UID names in exports (default false)");
+            Console.WriteLine("  -rf2lightscale <float> - RF2 light intensity scale factor (default 1.0)");
             Console.WriteLine("  -textranslate <true|false> - RF2 -> RF1 texture name translation (default false)");
             Console.WriteLine("  -geonodetail <true|false> - Remove detail flag from RF2 geoable brushes (default false)");
             Console.WriteLine("  -portalfaces <true|false> - Include portal faces (default true)");
