@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.Metrics;
 using System.IO;
+using System.Linq;
 using System.Numerics;
 using System.Security.Cryptography;
 using System.Text;
@@ -82,6 +83,9 @@ namespace redux.parsers
             }
 
             // Read sections
+            Vector3 rf2MedianBaked = Vector3.Zero;
+            LevelProperties levelProperties = null;
+            int coronaDerivedLightCount = 0;
             for (int i = 0; i < numSections; i++)
             {
                 long sectionHeaderPos = reader.BaseStream.Position;
@@ -118,17 +122,24 @@ namespace redux.parsers
                     Logger.Debug(logSrc, $"Found brush geometry section (0x02000000) at 0x{sectionHeaderPos:X8}, size={sectionSize}");
                     RflBrushParser.ParseBrushesFromRfl(reader, sectionEnd, mesh, version);
                 }
-                else if (sectionType == 0x00000300) // lights 
+                else if (sectionType == 0x00000300) // lights (present in both RF1 and RF2 RFL files)
                 {
-                    Logger.Debug(logSrc, $"Found lights section (0x00000300) at 0x{sectionHeaderPos:X8}, size={sectionSize}");
+                    Logger.Debug(logSrc, $"Found lights section (0x300) at 0x{sectionHeaderPos:X8}, size={sectionSize}");
                     mesh.Lights.AddRange(RflLightParser.ParseLightsFromRfl(reader, sectionEnd, version));
                     reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
-
+                }
+                else if (sectionType == 0x00000500 && isRF2) // ambient sounds (RF2 - despite address proximity to lights, confirmed as sound emitters via FUN_00487ab0 → FUN_0055a100)
+                {
+                    Logger.Debug(logSrc, $"Found RF2 ambient_sounds section (0x500) at 0x{sectionHeaderPos:X8}, size={sectionSize}");
+                    // Not parsed - these are sound emitter objects, not visual lights
+                    reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
                 }
                 else if (sectionType == 0x0900) // level_properties
                 {
                     Logger.Debug(logSrc, $"Found level_properties section (0x0900) at 0x{sectionHeaderPos:X8}, size={sectionSize}");
-                    RflLevelPropertiesParser.ParseLevelPropertiesFromRfl(reader, sectionEnd, version);
+                    levelProperties = RflLevelPropertiesParser.ParseLevelPropertiesFromRfl(reader, sectionEnd, version);
+                    mesh.AmbientColor = levelProperties.AmbientColor;
+                    mesh.LightmapMultiplier = levelProperties.LightmapMultiplier;
                     reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin); // shouldn't be needed, but for safety since RF2 rfls have some unknowns
                 }
                 else if (sectionType == 0x01000000) // level_info
@@ -143,10 +154,16 @@ namespace redux.parsers
                     mesh.MPRespawnPoints.AddRange(RflMpRespawnPointParser.ParseMpRespawnPoints(reader, sectionEnd));
                     reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
                 }
-                else if (sectionType == 0x00000a00) // particle_emitters
+                else if (sectionType == 0x00000a00) // particle_emitters (RF1 format, also present in some RF2 RFLs; RF2 runtime uses 0x7677)
                 {
-                    Logger.Debug(logSrc, $"Found particle_emitters section (0x00000a00) at 0x{sectionHeaderPos:X8}, size={sectionSize}");
+                    Logger.Debug(logSrc, $"Found particle_emitters section (0x0A00) at 0x{sectionHeaderPos:X8}, size={sectionSize}");
                     mesh.ParticleEmitters.AddRange(RflParticleEmitterParser.ParseParticleEmittersFromRfl(reader, sectionEnd, version));
+                    reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
+                }
+                else if (sectionType == 0x7677 && isRF2) // particle_emitters (RF2 only - RF1 uses 0x0A00)
+                {
+                    // RF2 particle emitters use a simpler class-based format (not compatible with RF1 parser)
+                    Logger.Info(logSrc, $"Found RF2 particle_emitters section (0x7677) at 0x{sectionHeaderPos:X8}, size={sectionSize} (not yet implemented for RF2)");
                     reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
                 }
                 else if (sectionType == 0x00000600) // events
@@ -165,7 +182,7 @@ namespace redux.parsers
                 }
                 else if (sectionType == 0x00001100) // push_regions
                 {
-                    Logger.Debug(logSrc, $"Found push_regions section (0x00001100) at 0x{sectionHeaderPos:X8}, size={sectionSize}");
+                    Logger.Debug(logSrc, $"Found push_regions section (0x1100) at 0x{sectionHeaderPos:X8}, size={sectionSize}");
                     mesh.PushRegions.AddRange(RflPushRegionParser.ParsePushRegionsFromRfl(reader, sectionEnd));
                     reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
                 }
@@ -187,8 +204,14 @@ namespace redux.parsers
                 }
                 else if (sectionType == 0x00000d00) // climbing regions
                 {
-                    Logger.Debug(logSrc, $"Found climbing_regions section (0x00000d00) at 0x{sectionHeaderPos:X8}, size={sectionSize}");
+                    Logger.Debug(logSrc, $"Found climbing_regions section (0x0D00) at 0x{sectionHeaderPos:X8}, size={sectionSize}");
                     mesh.ClimbingRegions.AddRange(RflClimbingRegionParser.ParseClimbingRegionsFromRfl(reader, sectionEnd));
+                    reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
+                }
+                else if (sectionType == 0x7680 && isRF2) // climbing/push regions (RF2 only - RF1 uses 0x0D00)
+                {
+                    // RF2 climbing/push regions use a different format (not compatible with RF1 parser)
+                    Logger.Info(logSrc, $"Found RF2 climbing_regions section (0x7680) at 0x{sectionHeaderPos:X8}, size={sectionSize} (not yet implemented for RF2)");
                     reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
                 }
                 else if (sectionType == 0x00010000) // waypoint lists
@@ -212,6 +235,13 @@ namespace redux.parsers
                 {
                     Logger.Debug(logSrc, $"Found decals section (0x1000) at 0x{sectionHeaderPos:X8}, size={sectionSize}");
                     mesh.Decals.AddRange(RflDecalParser.ParseDecalsFromRfl(reader, sectionEnd, version));
+                    reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
+                }
+                else if (sectionType == 0x00000f00 && isRF2) // decals (RF2 only - RF1 uses 0x1000)
+                {
+                    // RF2 decals at 0x0F00 use a simpler class-based format (just common header)
+                    Logger.Debug(logSrc, $"Found RF2 decals section (0x0F00) at 0x{sectionHeaderPos:X8}, size={sectionSize}");
+                    mesh.Decals.AddRange(RflDecalParser.ParseDecalsFromRflRF2(reader, sectionEnd));
                     reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
                 }
                 else if (sectionType == 0x00001200)  // lightmaps (RF1 only)
@@ -255,6 +285,35 @@ namespace redux.parsers
                     mesh.Coronas.AddRange(RflCoronaParser.ParseCoronasFromRfl(reader, sectionEnd));
                     reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
                 }
+                else if (sectionType == 0x7779 && isRF2)  // RF2 lightmap geometry metadata
+                {
+                    Logger.Debug(logSrc, $"Found RF2 lightmap geometry section (0x7779) at 0x{sectionHeaderPos:X8}, size={sectionSize}");
+                    reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
+                }
+                else if (sectionType == 0x7900 && isRF2)  // RF2 lightmap vertex colors
+                {
+                    Logger.Debug(logSrc, $"Found RF2 lightmap vertex colors section (0x7900) at 0x{sectionHeaderPos:X8}, size={sectionSize}");
+                    var rf2LightmapData = RflRF2LightmapParser.ParseRF2LightmapsFromRfl(reader, sectionEnd);
+                    if (rf2LightmapData != null)
+                    {
+                        var convertedLightmaps = RflRF2LightmapParser.ConvertToLightmaps(rf2LightmapData);
+                        mesh.Lightmaps.AddRange(convertedLightmaps);
+                        rf2MedianBaked = RflRF2LightmapParser.ComputeMedianBakedColor(rf2LightmapData);
+                        Logger.Info(logSrc, $"Parsed {convertedLightmaps.Count} RF2 lightmaps from vertex color data (median baked RGB: {rf2MedianBaked.X},{rf2MedianBaked.Y},{rf2MedianBaked.Z})");
+
+                        if (Config.DumpLightmaps)
+                        {
+                            Logger.Debug(logSrc, "Dumping RF2 lightmaps...");
+                            int startIdx = mesh.Lightmaps.Count - convertedLightmaps.Count;
+                            for (int ilm = 0; ilm < convertedLightmaps.Count; ilm++)
+                            {
+                                string outputPath = $"lightmap_{startIdx + ilm}.tga";
+                                TgaExporter.Write24BitTga(outputPath, convertedLightmaps[ilm]);
+                            }
+                        }
+                    }
+                    reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
+                }
 
                 else if (sectionType == 0x0) // end section
                 {
@@ -267,21 +326,186 @@ namespace redux.parsers
                     reader.BaseStream.Seek(sectionSize, SeekOrigin.Current); // Skip unknown section
                 }
 
-                //rf2:
-                // 0x7001 = skeletal meshes (rfc)
-                // 0x7002 = animations (rfa)
-                // 0x7003 = static meshes (rfm)
-                // 0x7004 = rfe
-                // 0x7005 = maybe texture packfiles? (peg)
-                // 0x400 = related to cutscenes/cameras?
-                // 0x500 = related to sounds?
-                // 0x7677 = totally unknown
-                // 0x7777 = something to do with events?
-                // 0x7680 = something to do with vfx?
-                // 0x30000 = entities
-                // 0x7681 = something to do with vfx?
-                // 0x7779 = something to do with spline paths?
+                // RF2 chunk IDs (confirmed via rf2.exe):
+                // Phase 1 (pre-geometry): 0x0100=geometry, 0x0900=level_properties, 0x7001=textures,
+                //   0x7002=lightmaps, 0x7003=V3D models, 0x7004=VFX effects, 0x7005=sounds
+                // Phase 2: 0x0200=skipped, 0x0400=spawn points, 0x0500=ambient sounds, 0x0600=events,
+                //   0x0700=MP respawns, 0x0C00=editor-only (skipped), 0x0D00=cutscene cameras,
+                //   0x0E00=ambient sounds, 0x0F00=decals (RF2 format), 0x1000=decals (RF1 format), 0x1100=kill regions,
+                //   0x2000=movers, 0x3000=entity groups, 0x4000=cutscene paths,
+                //   0x7677=particle emitters, 0x7678=glares/coronas, 0x7679=random item spawners,
+                //   0x7680=climbing/push regions, 0x7681=clutter, 0x7777=keyframed movers,
+                //   0x7779=lightmap geometry, 0x7900=lightmap vertex colors, 0x7901=fast geometry flag,
+                //   0x10000=portals, 0x20000=nav points v2, 0x30000=entities/NPCs,
+                //   0x40000=items, 0x50000=clutters, 0x60000=triggers, 0x70000=player start
 
+            }
+
+            // Convert RF2 coronas to RF1 point lights (RED2 bakes coronas as light sources)
+            if (isRF2 && mesh.Coronas.Count > 0)
+            {
+                // Find max UID across all objects to assign corona-derived light UIDs above everything
+                int maxUID = 0;
+                foreach (var b in mesh.Brushes) maxUID = Math.Max(maxUID, b.UID);
+                foreach (var l in mesh.Lights) maxUID = Math.Max(maxUID, l.UID);
+                foreach (var d in mesh.Decals) maxUID = Math.Max(maxUID, d.UID);
+                foreach (var e in mesh.Events) maxUID = Math.Max(maxUID, e.UID);
+                foreach (var t in mesh.Triggers) maxUID = Math.Max(maxUID, t.UID);
+                foreach (var it in mesh.Items) maxUID = Math.Max(maxUID, it.UID);
+                foreach (var c in mesh.Clutters) maxUID = Math.Max(maxUID, c.UID);
+                foreach (var np in mesh.NavPoints) maxUID = Math.Max(maxUID, np.UID);
+                foreach (var pe in mesh.ParticleEmitters) maxUID = Math.Max(maxUID, pe.UID);
+                foreach (var pr in mesh.PushRegions) maxUID = Math.Max(maxUID, pr.UID);
+                foreach (var cr in mesh.ClimbingRegions) maxUID = Math.Max(maxUID, cr.UID);
+                foreach (var co in mesh.Coronas) maxUID = Math.Max(maxUID, co.UID);
+                foreach (var mv in mesh.Movers) maxUID = Math.Max(maxUID, mv.UID);
+                int coronaNextUID = maxUID + 1;
+
+                // Derive per-corona light range from the map's regular lights.
+                // Base range = median regular light range (already ×3 scaled) halved.
+                // Per-corona range = baseRange × sqrt(Intensity), since in inverse-square
+                // attenuation the effective illumination distance scales as sqrt(I).
+                // This gives bright coronas (I=1.0) the full base range, while dim accent
+                // coronas (I=0.03) get ~17% of it.
+                float coronaBaseRange = 15.0f; // fallback if no regular lights
+                if (mesh.Lights.Count > 0)
+                {
+                    var ranges = mesh.Lights.Select(l => l.Range).OrderBy(r => r).ToList();
+                    float median = ranges[ranges.Count / 2];
+                    coronaBaseRange = median / 2.0f;
+                }
+                Logger.Info(logSrc, $"Corona base range: {coronaBaseRange:F1}m (median/2 of {mesh.Lights.Count} regular lights)");
+
+                int coronaLightCount = 0;
+                int coronaSkipCount = 0;
+                foreach (var corona in mesh.Coronas)
+                {
+                    // Skip black coronas — they contribute no light
+                    byte cr = (byte)(corona.Color.X * 255f);
+                    byte cg = (byte)(corona.Color.Y * 255f);
+                    byte cb = (byte)(corona.Color.Z * 255f);
+                    if (cr == 0 && cg == 0 && cb == 0)
+                    {
+                        coronaSkipCount++;
+                        continue;
+                    }
+
+                    var light = new Light();
+                    light.UID = coronaNextUID++;
+                    light.ClassName = "Light";
+                    light.Position = corona.Position;
+                    light.ScriptName = corona.ScriptName;
+                    light.HiddenInEditor = false;
+                    light.Dynamic = false;
+                    light.Fade = false;
+                    light.ShadowCasting = true;
+                    light.IsEnabled = true;
+                    light.InitialState = (LightState)2; // matches RED's default bake-eligible state
+                    light.Color = new Vector4(corona.Color.X, corona.Color.Y, corona.Color.Z, 1.0f);
+                    light.Range = coronaBaseRange * (float)Math.Sqrt(Math.Max(corona.Intensity, 0.01f));
+                    light.IntensityAtMaxRange = 0;
+                    light.DropoffType = 0;
+                    light.TubeLightWidth = 4.0f;
+                    light.OnIntensity = corona.Intensity * Config.RF2LightScale;
+                    light.OnTime = 1.0f;
+                    light.OnTimeVariation = 0;
+                    light.OffIntensity = 0;
+                    light.OffTime = 1.0f;
+                    light.OffTimeVariation = 0;
+
+                    // Narrow-cone coronas become spotlights. Surveyed all RF2 maps:
+                    // genuine spotlights ≤44° (l01s1=30, l05s1=40, l02s1=44),
+                    // visual/omni coronas ≥70° (dmc13=70, ctfo=75-85, dmpc04=90, others=360).
+                    // Threshold 60° sits cleanly in the 44-70° gap.
+                    Vector3 coneDir = new Vector3(corona.Orientation.M31, corona.Orientation.M32, corona.Orientation.M33);
+                    bool isDirectional = corona.ConeAngle < 60f && coneDir.LengthSquared() > 0.001f;
+                    if (isDirectional)
+                    {
+                        light.Type = LightType.Spot;
+                        light.FOV = corona.ConeAngle / 2.0f;
+                        light.FOVDropoff = corona.ConeAngle / 2.0f;
+
+                        // Use orientation matrix directly (normalized rows)
+                        Vector3 forward = Vector3.Normalize(coneDir);
+                        Vector3 right = Vector3.Normalize(new Vector3(corona.Orientation.M11, corona.Orientation.M12, corona.Orientation.M13));
+                        Vector3 up = Vector3.Normalize(new Vector3(corona.Orientation.M21, corona.Orientation.M22, corona.Orientation.M23));
+                        light.Rotation = new Matrix4x4(
+                            right.X, right.Y, right.Z, 0,
+                            up.X, up.Y, up.Z, 0,
+                            forward.X, forward.Y, forward.Z, 0,
+                            0, 0, 0, 1
+                        );
+                        Logger.Dev(logSrc, $"Corona UID {corona.UID} → spotlight dir=({forward.X:F2},{forward.Y:F2},{forward.Z:F2}) cone={corona.ConeAngle}°");
+                    }
+                    else
+                    {
+                        light.Type = LightType.Point;
+                        light.Rotation = Matrix4x4.Identity;
+                        light.FOV = 15.0f;
+                        light.FOVDropoff = 15.0f;
+                    }
+
+                    mesh.Lights.Add(light);
+                    coronaLightCount++;
+                }
+                coronaDerivedLightCount = coronaLightCount;
+                int spotCount = mesh.Coronas.Count(c => c.ConeAngle < 60f && new Vector3(c.Orientation.M31, c.Orientation.M32, c.Orientation.M33).LengthSquared() > 0.001f && (byte)(c.Color.X * 255f) + (byte)(c.Color.Y * 255f) + (byte)(c.Color.Z * 255f) > 0);
+                // Compute range stats for the converted corona lights
+                var coronaLights = mesh.Lights.Skip(mesh.Lights.Count - coronaLightCount).ToList();
+                float minR = coronaLights.Count > 0 ? coronaLights.Min(l => l.Range) : 0;
+                float maxR = coronaLights.Count > 0 ? coronaLights.Max(l => l.Range) : 0;
+                Logger.Warn(logSrc, $"Converted {coronaLightCount} RF2 coronas to lights ({spotCount} spot, {coronaLightCount - spotCount} point, {coronaSkipCount} black skipped, range={minR:F1}-{maxR:F1}m, UIDs {maxUID + 1}-{coronaNextUID - 1})");
+            }
+
+            // Apply RF2 lightmap multiplier to all light intensities (post-loop since section order varies)
+            if (isRF2 && mesh.LightmapMultiplier != 1.0f)
+            {
+                Logger.Warn(logSrc, $"Applying RF2 lightmap multiplier ({mesh.LightmapMultiplier}) to {mesh.Lights.Count} lights");
+                foreach (var light in mesh.Lights)
+                {
+                    light.OnIntensity *= mesh.LightmapMultiplier;
+                    light.OffIntensity *= mesh.LightmapMultiplier;
+                }
+            }
+
+            if (isRF2)
+            {
+                int rawR = (int)mesh.AmbientColor.X;
+                int rawG = (int)mesh.AmbientColor.Y;
+                int rawB = (int)mesh.AmbientColor.Z;
+
+                // Compute recommended ambient from baked vertex color data.
+                // median_baked × 1.5 estimates the ambient needed in RF1 to produce
+                // similar overall brightness (accounts for RED2's ~0.2 ambient factor
+                // and inverse-square attenuation vs RED's ~0.5 factor and linear falloff).
+                // Take the max with raw RF2 ambient to preserve high-ambient maps.
+                int recR = Math.Min(255, Math.Max(rawR, (int)Math.Round(rf2MedianBaked.X * 1.5f)));
+                int recG = Math.Min(255, Math.Max(rawG, (int)Math.Round(rf2MedianBaked.Y * 1.5f)));
+                int recB = Math.Min(255, Math.Max(rawB, (int)Math.Round(rf2MedianBaked.Z * 1.5f)));
+
+                int originalLightCount = mesh.Lights.Count - coronaDerivedLightCount;
+                Logger.Warn(logSrc, $"RF2 light conversion summary: {originalLightCount} lights + {coronaDerivedLightCount} corona-derived lights, rf2lightscale={Config.RF2LightScale}, lmMult={mesh.LightmapMultiplier}, effective={Config.RF2LightScale * mesh.LightmapMultiplier}x");
+                Logger.Warn(logSrc, $"RF2 ambient (raw): R={rawR} G={rawG} B={rawB}");
+                Logger.Warn(logSrc, $"RF2 baked median: R={rf2MedianBaked.X} G={rf2MedianBaked.Y} B={rf2MedianBaked.Z}");
+                Logger.Warn(logSrc, $"Recommended RF1 ambient: R={recR} G={recG} B={recB} (set in RED level properties)");
+
+                // Fog settings
+                if (levelProperties != null)
+                {
+                    Logger.Warn(logSrc, $"RF2 fog: color=({levelProperties.FogR},{levelProperties.FogG},{levelProperties.FogB}) near={levelProperties.FogNear} far={levelProperties.FogFar}");
+                }
+
+                // Geoable brush UIDs
+                var geoableUIDs = new List<int>();
+                foreach (var brush in mesh.Brushes)
+                {
+                    if (brush.Solid != null && (brush.Solid.Flags & (uint)SolidFlags.Geoable) != 0)
+                        geoableUIDs.Add(brush.UID);
+                }
+                if (geoableUIDs.Count > 0)
+                    Logger.Warn(logSrc, $"RF2 geoable brush UIDs ({geoableUIDs.Count}): {string.Join(", ", geoableUIDs)}");
+                else
+                    Logger.Warn(logSrc, "RF2 geoable brush UIDs: none");
             }
 
             return mesh;
@@ -313,34 +537,34 @@ namespace redux.parsers
                 c.Position = new Vector3(px, py, pz);
                 Logger.Dev(logSrc, $"Corona[{i}] Pos = ({px:F3}, {py:F3}, {pz:F3})");
 
-                byte r = reader.ReadByte(),
-                     g = reader.ReadByte(),
-                     b = reader.ReadByte(),
-                     a = reader.ReadByte();
-                c.Color = new Vector4(r / 255f, g / 255f, b / 255f, a / 255f);
-                Logger.Dev(logSrc, $"Corona[{i}] Color = ({r},{g},{b},{a})");
-
-                // unknown fields               
-                reader.ReadSingle();
-                reader.ReadSingle();                
-                reader.ReadSingle();
-                reader.ReadSingle();
-                reader.ReadSingle();
-                reader.ReadSingle();
-                reader.ReadSingle();
-                reader.ReadByte();
-                reader.ReadByte();
-                reader.ReadByte();
-                reader.ReadByte();
+                // Rotation matrix: 9 floats (36 bytes) per rf2.exe FUN_005289f0
+                // Stream order: row3(right), row1(forward), row2(up)
+                float[] rf = new float[9];
+                for (int j = 0; j < 9; j++) rf[j] = reader.ReadSingle();
+                // Map to RF1 convention: Row1=right, Row2=up, Row3=forward(cone dir)
+                c.Orientation = new Matrix4x4(
+                    rf[0], rf[1], rf[2], 0,  // Row1 = right (stream row3)
+                    rf[6], rf[7], rf[8], 0,  // Row2 = up (stream row2)
+                    rf[3], rf[4], rf[5], 0,  // Row3 = forward (stream row1, cone direction)
+                    0, 0, 0, 1
+                );
+                Vector3 fwd = new Vector3(rf[3], rf[4], rf[5]);
+                Logger.Dev(logSrc, $"Corona[{i}] Direction = ({fwd.X:F3}, {fwd.Y:F3}, {fwd.Z:F3})");
 
                 c.ScriptName = Utils.ReadVString(reader);
                 Logger.Dev(logSrc, $"Corona[{i}] Script Name = \"{c.ScriptName}\"");
 
-                // unknown fields
-                reader.ReadByte();
-                reader.ReadByte();
-                reader.ReadSingle();
-                reader.ReadSingle();
+                // Version-gated fields per rf2.exe FUN_00528b60/FUN_00528950
+                reader.ReadByte(); // bool (v>=0)
+                byte r = reader.ReadByte(), g = reader.ReadByte(),
+                     b = reader.ReadByte(), a = reader.ReadByte(); // RGBA color (v>=0)
+                c.Color = new Vector4(r / 255f, g / 255f, b / 255f, a / 255f);
+                Logger.Dev(logSrc, $"Corona[{i}] Color = ({r},{g},{b},{a})");
+                reader.ReadByte(); // bool (v>=0x103)
+                reader.ReadByte(); // bool (v>=0x120)
+                reader.ReadByte(); // bool (v>=0x121)
+                reader.ReadByte(); // bool (v>=0x124)
+                reader.ReadByte(); // bool (v>=0xe8)
                 
 
                 c.CoronaBitmap = Utils.ReadVString(reader);
@@ -755,6 +979,47 @@ namespace redux.parsers
 
             return result;
         }
+
+        // RF2 decals (chunk 0x0F00) use a simpler class-based format.
+        // Properties like texture, extents, alpha are defined externally by class name.
+        public static List<Decal> ParseDecalsFromRflRF2(BinaryReader reader, long sectionEnd)
+        {
+            int numDecals = reader.ReadInt32();
+            Logger.Info(logSrc, $"Found {numDecals} RF2 decal(s).");
+
+            var result = new List<Decal>(numDecals);
+            for (int i = 0; i < numDecals; i++)
+            {
+                var d = new Decal();
+
+                d.UID = reader.ReadInt32();
+                d.ClassName = Utils.ReadVString(reader);
+
+                float px = reader.ReadSingle(), py = reader.ReadSingle(), pz = reader.ReadSingle();
+                d.Position = new Vector3(px, py, pz);
+
+                float fx = reader.ReadSingle(), fy = reader.ReadSingle(), fz = reader.ReadSingle();
+                float rx = reader.ReadSingle(), ry = reader.ReadSingle(), rz = reader.ReadSingle();
+                float ux = reader.ReadSingle(), uy = reader.ReadSingle(), uz = reader.ReadSingle();
+                d.Rotation = new Matrix4x4(
+                    rx, ry, rz, 0f,
+                    ux, uy, uz, 0f,
+                    fx, fy, fz, 0f,
+                    0f, 0f, 0f, 1f
+                );
+
+                d.ScriptName = Utils.ReadVString(reader);
+                d.HiddenInEditor = reader.ReadByte() != 0;
+
+                Logger.Dev(logSrc,
+                    $"RF2 Decal[{i}] UID={d.UID}, ClassName=\"{d.ClassName}\", " +
+                    $"Pos=({px:F2},{py:F2},{pz:F2}), Script=\"{d.ScriptName}\", Hidden={d.HiddenInEditor}");
+
+                result.Add(d);
+            }
+
+            return result;
+        }
     }
 
     static class RflWaypointListParser
@@ -966,6 +1231,230 @@ namespace redux.parsers
             }
 
             return lightmaps;
+        }
+    }
+
+    public static class RflRF2LightmapParser
+    {
+        private const string logSrc = "RflRF2LightmapParser";
+
+        private static byte ClampToByte(int value)
+        {
+            if (value < 0) return 0;
+            if (value > 255) return 255;
+            return (byte)value;
+        }
+
+        private static string ReadNullTerminatedString(BinaryReader reader)
+        {
+            var bytes = new List<byte>();
+            byte b;
+            while ((b = reader.ReadByte()) != 0)
+            {
+                bytes.Add(b);
+            }
+            return Encoding.ASCII.GetString(bytes.ToArray());
+        }
+
+        public static RF2LightmapData ParseRF2LightmapsFromRfl(BinaryReader reader, long sectionEnd)
+        {
+            var data = new RF2LightmapData();
+
+            data.Version = reader.ReadInt32();
+            if (data.Version != 5)
+            {
+                Logger.Warn(logSrc, $"Unsupported RF2 lightmap version {data.Version} (expected 5), skipping.");
+                return null;
+            }
+
+            int numTextureNames = reader.ReadInt32();
+            int numFaceGroups = reader.ReadInt32();
+            Logger.Dev(logSrc, $"Version={data.Version}, textureNames={numTextureNames}, faceGroups={numFaceGroups}");
+
+            // Texture name table
+            for (int i = 0; i < numTextureNames; i++)
+            {
+                data.TextureNames.Add(ReadNullTerminatedString(reader));
+            }
+
+            // Light probes
+            int numLightProbes = reader.ReadInt32();
+            for (int i = 0; i < numLightProbes; i++)
+            {
+                float a = reader.ReadSingle();
+                float b = reader.ReadSingle();
+                data.LightProbes.Add((a, b));
+            }
+
+            // Read all face group lightmap IDs first (pre-loop)
+            var lightmapIds = new int[numFaceGroups];
+            for (int i = 0; i < numFaceGroups; i++)
+            {
+                lightmapIds[i] = reader.ReadInt32();
+            }
+
+            // Parse each face group
+            for (int g = 0; g < numFaceGroups; g++)
+            {
+                var group = new RF2LightmapFaceGroup();
+                group.LightmapId = lightmapIds[g];
+
+                int numEntries = reader.ReadInt32();
+                Logger.Dev(logSrc, $"FaceGroup[{g}] id={group.LightmapId}, entries={numEntries}");
+
+                for (int e = 0; e < numEntries; e++)
+                {
+                    var entry = new RF2LightmapEntry();
+
+                    entry.FaceVertexCount = reader.ReadInt32();
+                    entry.TriangleVertexCount = reader.ReadInt32();
+                    entry.TextureIndex = reader.ReadInt32();
+                    entry.Unknown1 = reader.ReadInt32();
+                    entry.Unknown2 = reader.ReadInt32();
+
+                    // Vertex positions
+                    for (int v = 0; v < entry.FaceVertexCount; v++)
+                    {
+                        float x = reader.ReadSingle();
+                        float y = reader.ReadSingle();
+                        float z = reader.ReadSingle();
+                        entry.VertexPositions.Add(new Vector3(x, y, z));
+                    }
+
+                    // AABB min/max (2 × Vec3, read and discard)
+                    reader.BaseStream.Seek(24, SeekOrigin.Current);
+
+                    // Triangle vertex data
+                    for (int v = 0; v < entry.TriangleVertexCount; v++)
+                    {
+                        var vert = new RF2LightmapVertex();
+
+                        // 3 indices
+                        vert.Index0 = reader.ReadInt32();
+                        vert.Index1 = reader.ReadInt32();
+                        vert.Index2 = reader.ReadInt32();
+
+                        // 9 color values as int32, clamped to [0,255]
+                        // 3 per-vertex RGB colors in vertex-major order:
+                        // v0_R, v0_G, v0_B, v1_R, v1_G, v1_B, v2_R, v2_G, v2_B
+                        vert.V0_R = ClampToByte(reader.ReadInt32());
+                        vert.V0_G = ClampToByte(reader.ReadInt32());
+                        vert.V0_B = ClampToByte(reader.ReadInt32());
+                        vert.V1_R = ClampToByte(reader.ReadInt32());
+                        vert.V1_G = ClampToByte(reader.ReadInt32());
+                        vert.V1_B = ClampToByte(reader.ReadInt32());
+                        vert.V2_R = ClampToByte(reader.ReadInt32());
+                        vert.V2_G = ClampToByte(reader.ReadInt32());
+                        vert.V2_B = ClampToByte(reader.ReadInt32());
+
+                        // 6 interleaved floats: per-vertex UV coordinates
+                        // File order: u0, v0, u1, v1, u2, v2
+                        float u0 = reader.ReadSingle();
+                        float v0 = reader.ReadSingle();
+                        float u1 = reader.ReadSingle();
+                        float v1 = reader.ReadSingle();
+                        float u2 = reader.ReadSingle();
+                        float v2 = reader.ReadSingle();
+                        vert.UCoords = new Vector3(u0, u1, u2);
+                        vert.VCoords = new Vector3(v0, v1, v2);
+
+                        // Alpha as int32, clamped
+                        vert.Alpha = ClampToByte(reader.ReadInt32());
+
+                        // Trailing Vec3 (discard)
+                        reader.BaseStream.Seek(12, SeekOrigin.Current);
+
+                        entry.TriangleVertices.Add(vert);
+                    }
+
+                    group.Entries.Add(entry);
+                }
+
+                data.FaceGroups.Add(group);
+            }
+
+            Logger.Dev(logSrc, $"Finished parsing RF2 lightmaps: {data.FaceGroups.Count} face groups");
+            return data;
+        }
+
+        public static List<Lightmap> ConvertToLightmaps(RF2LightmapData data)
+        {
+            var lightmaps = new List<Lightmap>();
+
+            foreach (var group in data.FaceGroups)
+            {
+                foreach (var entry in group.Entries)
+                {
+                    if (entry.TriangleVertexCount == 0)
+                        continue;
+
+                    // Each triangle entry has 3 per-vertex baked colors.
+                    // Produce 3 pixels per triangle (one per vertex).
+                    int count = entry.TriangleVertexCount;
+                    int totalPixels = count * 3; // 3 vertices per triangle entry
+                    int width = (int)Math.Ceiling(Math.Sqrt(totalPixels));
+                    int height = (int)Math.Ceiling((double)totalPixels / width);
+
+                    var lm = new Lightmap();
+                    lm.Width = width;
+                    lm.Height = height;
+                    lm.PixelData = new byte[width * height * 3]; // zero-initialized (black padding)
+
+                    for (int v = 0; v < count; v++)
+                    {
+                        var vert = entry.TriangleVertices[v];
+                        // Vertex 0
+                        int offset = (v * 3) * 3;
+                        lm.PixelData[offset + 0] = vert.V0_R;
+                        lm.PixelData[offset + 1] = vert.V0_G;
+                        lm.PixelData[offset + 2] = vert.V0_B;
+                        // Vertex 1
+                        offset = (v * 3 + 1) * 3;
+                        lm.PixelData[offset + 0] = vert.V1_R;
+                        lm.PixelData[offset + 1] = vert.V1_G;
+                        lm.PixelData[offset + 2] = vert.V1_B;
+                        // Vertex 2
+                        offset = (v * 3 + 2) * 3;
+                        lm.PixelData[offset + 0] = vert.V2_R;
+                        lm.PixelData[offset + 1] = vert.V2_G;
+                        lm.PixelData[offset + 2] = vert.V2_B;
+                    }
+
+                    lightmaps.Add(lm);
+                }
+            }
+
+            Logger.Dev(logSrc, $"Converted {lightmaps.Count} RF2 lightmap entries to bitmap lightmaps");
+            return lightmaps;
+        }
+
+        public static Vector3 ComputeMedianBakedColor(RF2LightmapData data)
+        {
+            var reds = new List<byte>();
+            var greens = new List<byte>();
+            var blues = new List<byte>();
+
+            foreach (var group in data.FaceGroups)
+            {
+                foreach (var entry in group.Entries)
+                {
+                    foreach (var vert in entry.TriangleVertices)
+                    {
+                        reds.Add(vert.V0_R); greens.Add(vert.V0_G); blues.Add(vert.V0_B);
+                        reds.Add(vert.V1_R); greens.Add(vert.V1_G); blues.Add(vert.V1_B);
+                        reds.Add(vert.V2_R); greens.Add(vert.V2_G); blues.Add(vert.V2_B);
+                    }
+                }
+            }
+
+            if (reds.Count == 0) return Vector3.Zero;
+
+            reds.Sort();
+            greens.Sort();
+            blues.Sort();
+
+            int mid = reds.Count / 2;
+            return new Vector3(reds[mid], greens[mid], blues[mid]);
         }
     }
 
@@ -1852,11 +2341,22 @@ namespace redux.parsers
     }
 
 
+    public class LevelProperties
+    {
+        public Vector4 AmbientColor { get; set; }
+        public float LightmapMultiplier { get; set; } = 1.0f;
+        public byte FogR { get; set; }
+        public byte FogG { get; set; }
+        public byte FogB { get; set; }
+        public float FogNear { get; set; }
+        public float FogFar { get; set; }
+    }
+
     public static class RflLevelPropertiesParser
     {
         private const string logSrc = "RflLevelPropertiesParser";
 
-        public static void ParseLevelPropertiesFromRfl(BinaryReader reader, long sectionEnd, int rfl_version)
+        public static LevelProperties ParseLevelPropertiesFromRfl(BinaryReader reader, long sectionEnd, int rfl_version)
         {
             // geomod_texture
             string geomodTexture = ReadVString(reader);
@@ -1891,39 +2391,53 @@ namespace redux.parsers
             Logger.Warn(logSrc, $"  Distance fog near clip plane: {fogNear}");
             Logger.Warn(logSrc, $"  Distance fog far clip plane:  {fogFar}");
 
+            float lightmapMultiplier = 1.0f;
+
             if (rfl_version == 0x127) // rf2
             {
-                uint unk1 = reader.ReadUInt32();
-                uint unk2 = reader.ReadUInt32();
-                float unk3 = reader.ReadSingle();
-                float maybeAmbientScale = reader.ReadSingle();
-                float unk5 = reader.ReadSingle();
-                byte unk1R = reader.ReadByte(), unk1G = reader.ReadByte(), unk1B = reader.ReadByte(), unk1A = reader.ReadByte();
-                byte unk2R = reader.ReadByte(), unk2G = reader.ReadByte(), unk2B = reader.ReadByte(), unk2A = reader.ReadByte();
-                float maybeExposureRaw = reader.ReadSingle();
-                //SavedValues.maybeExposure = maybeAmbientScale * maybeExposureRaw * 5.0f;
-                SavedValues.maybeExposure = maybeExposureRaw * 5.0f;
+                // Verified against rf2.exe FUN_0048a370:
+                // Field order: RGBA, float, float, float(v>0x10F), float(v>0x101), RGBA+int32(v>0x10D), float(v>0x11E)
+                // For RF2 v295, all version-conditional fields are present.
+                // rf2.exe discards most of these at runtime (the baked vertex colors already include their effects),
+                // but RED2 uses them during lightmap baking. Field names inferred from data analysis across 101 RF2 RFLs.
 
-                Logger.Warn(logSrc, "Guesses at unknown RF2 level properties fields:");
-                Logger.Warn(logSrc, $"  Unk1 (flags?): 0x{unk1:X8}");
-                Logger.Warn(logSrc, $"  Unk2 (flags?): 0x{unk2:X8}");
-                Logger.Warn(logSrc, $"  maybeViewDistance: {unk3}");
-                Logger.Warn(logSrc, $"  maybeAmbientScale: {maybeAmbientScale}");
-                Logger.Warn(logSrc, $"  maybeSunAngleDeg: {unk5}");
-                Logger.Warn(logSrc, $"  maybeSkyColorRGBA: [{unk1R},{unk1G},{unk1B},{unk1A}]");
-                Logger.Warn(logSrc, $"  maybeSkyColorAltRGBA: [{unk2R},{unk2G},{unk2B},{unk2A}]");
-                Logger.Warn(logSrc, $"  maybeExposure: {maybeExposureRaw}, light multiplier {SavedValues.maybeExposure}");
+                // RED2 baking sun/directional light (not used by rf2.exe at runtime)
+                byte sunR = reader.ReadByte(), sunG = reader.ReadByte(), sunB = reader.ReadByte(), sunA = reader.ReadByte();
+                float sunYaw = reader.ReadSingle();
+                float sunPitch = reader.ReadSingle();
+                float sunIntensity = reader.ReadSingle(); // 0.0-1.0
+                float sunSpreadAngle = reader.ReadSingle(); // nearly always 89.9
+
+                // Hardlight overlay (fullscreen subtractive color quad) - the ONLY RF2-specific field used by rf2.exe
+                // Rendered via D3DBLENDOP_REVSUBTRACT in FUN_00431a50: output = framebuffer - (RGB * intensity/128)
+                byte hardlightR = reader.ReadByte(), hardlightG = reader.ReadByte(), hardlightB = reader.ReadByte(), hardlightA = reader.ReadByte();
+                int hardlightIntensity = reader.ReadInt32();
+
+                // RED2 lightmap brightness multiplier - scales all baked lighting (0.4-2.5 range, 1.0 = default)
+                lightmapMultiplier = reader.ReadSingle();
+
+                Logger.Info(logSrc, "RF2 level properties (RED2 baking parameters):");
+                Logger.Info(logSrc, $"  Sun light: RGB=({sunR},{sunG},{sunB}) yaw={sunYaw} pitch={sunPitch} intensity={sunIntensity} spread={sunSpreadAngle}");
+                Logger.Info(logSrc, $"  Hardlight overlay: RGB=({hardlightR},{hardlightG},{hardlightB}) intensity={hardlightIntensity} (subtractive)");
+                Logger.Info(logSrc, $"  Lightmap multiplier: {lightmapMultiplier}");
             }
 
-            // now read everything until we hit sectionEnd
-            int extraIndex = 0;
+            // read any remaining data until sectionEnd
             while (reader.BaseStream.Position < sectionEnd)
             {
-                var b = reader.ReadSingle();
-                Logger.Warn(logSrc, $"level_properties extra byte[{extraIndex}] = 0x{b:X2}");
-                extraIndex++;
+                reader.ReadSingle();
             }
 
+            return new LevelProperties
+            {
+                AmbientColor = new Vector4(ambR, ambG, ambB, ambA),
+                LightmapMultiplier = lightmapMultiplier,
+                FogR = fogR,
+                FogG = fogG,
+                FogB = fogB,
+                FogNear = fogNear,
+                FogFar = fogFar
+            };
         }
     }
 
@@ -1967,19 +2481,11 @@ namespace redux.parsers
                 light.Fade = (rawFlags & 0x2) != 0;
                 light.ShadowCasting = (rawFlags & 0x4) != 0;
                 light.IsEnabled = (rawFlags & 0x8) != 0;
-                //light.Type = (LightType)(rawFlags >> 4 & 0x3);
-                /*int typeBits = rfl_version == 0x127
-                    ? (int)((rawFlags >> 5) & 0x3)
-                    : (int)((rawFlags >> 4) & 0x3);*/
+                // Light type enum is the same for RF1 and RF2: 0=Undefined, 1=Point, 2=Spot(AABB), 3=Tube(OBB)
+                // (confirmed via rf2.exe FUN_00485da0 point-in-light tests and FUN_00431a50 debug drawing)
+                // The 0x300 chunk format is identical between RF1 and RF2.
                 int typeBits = (int)((rawFlags >> 4) & 0x3);
-                light.Type = rfl_version == 0x127
-                    ? typeBits switch
-                    {
-                        2 => LightType.Spot,
-                        3 => LightType.Tube,
-                        _ => (LightType)typeBits,
-                    }
-                    : (LightType)typeBits;
+                light.Type = (LightType)typeBits;
                 light.InitialState = (LightState)(rawFlags >> 8 & 0xF);
                 light.RuntimeShadow = (rawFlags & 0x2000) != 0;
                 Logger.Dev(logSrc,
@@ -2007,46 +2513,20 @@ namespace redux.parsers
                 }
                 else
                 {
-                    float I0 = reader.ReadSingle();     // the raw RF2 OnIntensity
-                    light.OnIntensity = I0;
-                    light.Range *= 1;
-                    /*float R = light.Range;
-                    switch (light.DropoffType)
-                    {
-                        case 0:
-                            // linear:        I(d) = I0 * (1 – d/R)
-                            // so I0_file = I_linear_at_d=0 / R → our engine wants I(d=0)=I0*R
-                            light.OnIntensity = I0 * R;
-                            break;
+                    // RF2 uses inverse-square attenuation: 1/(1+(d/r)^2)
+                    // RF1 uses linear attenuation: max(0, 1 - d/R)
+                    // Range conversion: RF2's r is the half-intensity distance;
+                    // multiplying by 3 extends RF1's linear cutoff to where RF2 drops to ~10%,
+                    // giving the closest curve match (RMS-optimal k≈2-3, total energy match at k=3).
+                    // With range×3, intensity scale ~1.0 closely tracks RF2's attenuation curve
+                    // (vs old scale=3.0 which overcompensated near-field for zero far-field).
+                    // lm_mult is applied separately (post-parse) for per-map intensity tuning.
+                    // Configurable via -rf2lightscale (default 1.0).
+                    float I0 = reader.ReadSingle();
+                    light.OnIntensity = I0 * Config.RF2LightScale;
+                    light.Range *= 3.0f; // inverse-square → linear range conversion
 
-                        case 1:
-                            // squared:       I(d) = I0 * (1 – d/R)^2
-                            // invert so total “power” matches at d=0 → scale by R^2
-                            light.OnIntensity = I0 * R * R;
-                            break;
-
-                        case 2:
-                            // cosine:        I(d) = I0 * cos(d/R * (π/2))
-                            // invert so at d=0 you get I0 * 1 → no extra scaling, but 
-                            // if your target engine expects I(d=R)=0, you leave it unmodified
-                            light.OnIntensity = I0;
-                            break;
-
-                        case 3:
-                            // sqrt:          I(d) = I0 * sqrt(1 – d/R)
-                            // invert so I(d=0) = I0 * 1 → must scale by √R 
-                            light.OnIntensity = I0 * MathF.Sqrt(R);
-                            break;
-
-                        default:
-                            // unknown: treat as linear
-                            light.OnIntensity = I0 * R;
-                            break;
-                    }*/
-
-                    light.OnIntensity *= SavedValues.maybeExposure;
-
-                    Logger.Dev(logSrc, $"Converted intensity for RF2 light {light.UID}. DropoffType={light.DropoffType}, Range={light.Range}, RawIntensity={I0}, NewIntensity={light.OnIntensity}");
+                    Logger.Dev(logSrc, $"Scaled RF2 light {light.UID}: raw_int={I0}, scale={Config.RF2LightScale}, result_int={light.OnIntensity}, range={light.Range/3:F1}→{light.Range:F1}");
                 }
                 light.OnTime = reader.ReadSingle();
                 light.OnTimeVariation = reader.ReadSingle();
@@ -2085,6 +2565,55 @@ namespace redux.parsers
                     $"Loaded Light[{i}] UID={light.UID}, class={light.ClassName}, pos={light.Position}, " +
                     $"flags=0x{rawFlags:X8}, color={light.Color}, range={light.Range}, int={light.OnIntensity}, intmr={light.IntensityAtMaxRange}"
                 );
+            }
+
+            return lights;
+        }
+
+        // RF2 lights (chunk 0x0500) use a much simpler format than RF1.
+        // Light properties (color, range, intensity, dropoff, etc.) are defined
+        // externally by class name; the RFL only stores position and a few params.
+        public static List<Light> ParseLightsFromRflRF2(BinaryReader reader, long sectionEnd)
+        {
+            var lights = new List<Light>();
+            int numLights = reader.ReadInt32();
+            Logger.Dev(logSrc, $"Reading {numLights} RF2 lights…");
+
+            for (int i = 0; i < numLights; i++)
+            {
+                long lightStart = reader.BaseStream.Position;
+                var light = new Light();
+
+                light.UID = reader.ReadInt32();
+
+                // RF2 light format: UID, position, bool, class name, 3 floats, 1 int
+                float px = reader.ReadSingle(), py = reader.ReadSingle(), pz = reader.ReadSingle();
+                light.Position = new Vector3(px, py, pz);
+
+                bool unkFlag = reader.ReadByte() != 0;
+
+                light.ClassName = ReadVString(reader);
+
+                float param1 = reader.ReadSingle();
+                float param2 = reader.ReadSingle();
+                float param3 = reader.ReadSingle();
+                int param4 = reader.ReadInt32();
+
+                // RF2 lights define most properties externally via class name.
+                // The inline params are passed to the light class lookup system.
+                // We store what we can and set reasonable defaults for the rest.
+                light.Range = param1;
+                light.OnIntensity = param2;
+                light.IsEnabled = true;
+                light.Type = LightType.Point;
+                light.Color = new Vector4(1f, 1f, 1f, 1f);
+
+                lights.Add(light);
+
+                Logger.Dev(logSrc,
+                    $"RF2 Light[{i}] UID={light.UID}, class={light.ClassName}, " +
+                    $"pos=({px:F2},{py:F2},{pz:F2}), unkFlag={unkFlag}, " +
+                    $"param1={param1}, param2={param2}, param3={param3}, param4={param4}");
             }
 
             return lights;

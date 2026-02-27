@@ -26,6 +26,8 @@ namespace redux.utilities
         public List<Group> Groups { get; } = new List<Group>();
         public List<Clutter> Clutters { get; } = new List<Clutter>();
         public List<Corona> Coronas { get; } = new List<Corona>();
+        public Vector4 AmbientColor { get; set; }
+        public float LightmapMultiplier { get; set; } = 1.0f;
     }
 
     public class Brush
@@ -522,6 +524,55 @@ namespace redux.utilities
         public int Height { get; set; }
         public byte[] PixelData { get; set; }
     }
+
+    public class RF2LightmapVertex
+    {
+        public int Index0 { get; set; }
+        public int Index1 { get; set; }
+        public int Index2 { get; set; }
+        // Per-vertex RGB colors (3 vertices per triangle, vertex-major order in file)
+        // File order: V0_R, V0_G, V0_B, V1_R, V1_G, V1_B, V2_R, V2_G, V2_B
+        public byte V0_R { get; set; }
+        public byte V0_G { get; set; }
+        public byte V0_B { get; set; }
+        public byte V1_R { get; set; }
+        public byte V1_G { get; set; }
+        public byte V1_B { get; set; }
+        public byte V2_R { get; set; }
+        public byte V2_G { get; set; }
+        public byte V2_B { get; set; }
+        public byte Alpha { get; set; }
+        // Per-vertex UV coordinates (interleaved in file: u0,v0,u1,v1,u2,v2)
+        // Stored as: UCoords = (u0, u1, u2), VCoords = (v0, v1, v2)
+        public Vector3 UCoords { get; set; }
+        public Vector3 VCoords { get; set; }
+    }
+
+    public class RF2LightmapEntry
+    {
+        public int FaceVertexCount { get; set; }
+        public int TriangleVertexCount { get; set; }
+        public int TextureIndex { get; set; }
+        public int Unknown1 { get; set; }
+        public int Unknown2 { get; set; }
+        public List<Vector3> VertexPositions { get; set; } = new();
+        public List<RF2LightmapVertex> TriangleVertices { get; set; } = new();
+    }
+
+    public class RF2LightmapFaceGroup
+    {
+        public int LightmapId { get; set; }
+        public List<RF2LightmapEntry> Entries { get; set; } = new();
+    }
+
+    public class RF2LightmapData
+    {
+        public int Version { get; set; }
+        public List<string> TextureNames { get; set; } = new();
+        public List<(float, float)> LightProbes { get; set; } = new();
+        public List<RF2LightmapFaceGroup> FaceGroups { get; set; } = new();
+    }
+
     public class WaypointList
     {
         public string Name { get; set; }
@@ -653,6 +704,7 @@ namespace redux.utilities
         public float DiminishDistance;
         public float VolumetricHeight;
         public float VolumetricLength;
+        public Matrix4x4 Orientation; // rotation matrix (Row1=right, Row2=up, Row3=forward/cone dir)
         public string CoronaBitmap;
         public string VolumetricBitmap;
     }

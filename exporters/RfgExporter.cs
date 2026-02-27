@@ -964,12 +964,17 @@ namespace redux.exporters
                 foreach (var tex in brush.Solid.Textures)
                     Utils.WriteVString(writer, tex);
 
-                var scrollFaces = brush.Solid.Faces
-                    .Where(face => Math.Abs(face.ScrollU) > 0.0001f || Math.Abs(face.ScrollV) > 0.0001f)
-                    .ToList();
-                writer.Write(scrollFaces.Count);
-                foreach (var face in scrollFaces)
+                var scrollFaceDict = new Dictionary<int, Face>();
+                foreach (var face in brush.Solid.Faces)
                 {
+                    if ((Math.Abs(face.ScrollU) > 0.0001f || Math.Abs(face.ScrollV) > 0.0001f) && !scrollFaceDict.ContainsKey(face.FaceId))
+                        scrollFaceDict[face.FaceId] = face;
+                }
+                writer.Write(scrollFaceDict.Count);
+                foreach (var kvp in scrollFaceDict)
+                {
+                    var face = kvp.Value;
+                    Logger.Dev(logSrc, $"  scroll: faceId={face.FaceId}, U={face.ScrollU}, V={face.ScrollV}");
                     writer.Write(face.FaceId);
                     writer.Write(face.ScrollU);
                     writer.Write(face.ScrollV);
@@ -1080,18 +1085,15 @@ namespace redux.exporters
 
                     writer.Write(face.TextureIndex);
 
-                    writer.Write(-1);
-                    writer.Write(face.FaceId);
-                    writer.Write(-1);
-                    writer.Write(-1);
-
-                    // smoothing groups isn't working currently. Writing out face.SmoothingGroups here breaks most brushes from RF2 RFLs
-                    //writer.Write(face.SmoothingGroups);
-                    writer.Write(0);
-                    writer.Write(face.FaceFlags);
-                    writer.Write((ushort)0);
-                    writer.Write(0);
-                    writer.Write(-1); // room index
+                    writer.Write(-1);                       // surface_index
+                    writer.Write(face.FaceId);              // face_id
+                    writer.Write(-1);                       // unk12
+                    writer.Write(-1);                       // reserved1
+                    writer.Write(-1);                       // portal_index
+                    writer.Write(face.FaceFlags);           // face_flags (ushort)
+                    writer.Write((ushort)0);                // reserved2
+                    writer.Write(face.SmoothingGroups);     // smoothing_groups
+                    writer.Write(-1);                       // room_index
 
                     writer.Write(idxs.Length);
                     for (int i = 0; i < idxs.Length; i++)

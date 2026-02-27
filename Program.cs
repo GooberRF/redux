@@ -80,6 +80,17 @@ namespace redux
                 {
                     Config.CoronaClutterName = args[++i];
                 }
+                else if (args[i].Equals("-rf2lightscale", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    if (float.TryParse(args[++i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float scale))
+                        Config.RF2LightScale = scale;
+                    else
+                        Logger.Warn(logSrc, $"Invalid value for -rf2lightscale. Using default {Config.RF2LightScale}.");
+                }
+                else if (args[i].Equals("-dumplightmaps", StringComparison.OrdinalIgnoreCase))
+                {
+                    Config.DumpLightmaps = true;
+                }
                 else if ((args[i].Equals("-skeleton", StringComparison.OrdinalIgnoreCase) ||
                           args[i].Equals("-skel", StringComparison.OrdinalIgnoreCase)) &&
                          i + 1 < args.Length)

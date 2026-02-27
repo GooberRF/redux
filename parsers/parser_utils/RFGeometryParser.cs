@@ -435,20 +435,11 @@ namespace redux.parsers.parser_utils
                     {
                         float rf2ScrollU_tmp = reader.ReadSingle();
                         float rf2ScrollV_tmp = reader.ReadSingle();
-                        Logger.Dev(logSrc, $"RF2 face[{i}] flag 0x8000 extra floats={rf2ScrollU_tmp}, {rf2ScrollV_tmp} (texture={textureIndex} {textureName})");
+                        Logger.Dev(logSrc, $"RF2 face[{i}] flag 0x8000 scroll data: U={rf2ScrollU_tmp}, V={rf2ScrollV_tmp} (texture={textureIndex} {textureName})");
 
-                        //if ((faceFlagsRF2 & 0x10) != 0)
-                        //{
                         rf2ScrollU = rf2ScrollU_tmp / 2;
                         rf2ScrollV = rf2ScrollV_tmp / 2;
                         hasRF2ScrollValues = true;
-                        //}
-
-                        // not sure if this stuff is actually needed or does anything?
-                        if (Math.Abs(rf2ScrollU_tmp - 1.0f) < 0.001f) faceFlagsRF2 |= 0x100000;
-                        else if (Math.Abs(rf2ScrollU_tmp - 1.35f) < 0.001f) faceFlagsRF2 |= 0x200000;
-                        else if (Math.Abs(rf2ScrollU_tmp - 1.5f) < 0.001f) faceFlagsRF2 |= 0x400000;
-                        else faceFlagsRF2 |= 0x800000;
                     }
 
                     // ¯\_(ツ)_/¯
