@@ -217,21 +217,6 @@ namespace redux.utilities
     }
 
     // used for static geometry in RFL format
-    public static class FaceFlags
-    {
-        public const ushort ShowSky = 0x01;
-        public const ushort Mirrored = 0x02;
-        public const ushort LiquidSurface = 0x04;
-        public const ushort IsDetail = 0x08;
-        public const ushort ScrollTexture = 0x10;
-        public const ushort FullBright = 0x20;
-        public const ushort HasAlpha = 0x40;
-        public const ushort HasHoles = 0x80;
-        public const ushort LightmapResolutionMask = 0x0300;
-        public const ushort IsInvisible = 0x2000;
-    }
-
-    // used for static geometry in RFL format
     public class SubroomList
     {
         public int RoomIndex { get; set; }

@@ -85,6 +85,7 @@ namespace redux.parsers
             // Read sections
             Vector3 rf2MedianBaked = Vector3.Zero;
             LevelProperties levelProperties = null;
+            RF2LightmapData rf2LightmapData = null;
             int coronaDerivedLightCount = 0;
             for (int i = 0; i < numSections; i++)
             {
@@ -293,7 +294,7 @@ namespace redux.parsers
                 else if (sectionType == 0x7900 && isRF2)  // RF2 lightmap vertex colors
                 {
                     Logger.Debug(logSrc, $"Found RF2 lightmap vertex colors section (0x7900) at 0x{sectionHeaderPos:X8}, size={sectionSize}");
-                    var rf2LightmapData = RflRF2LightmapParser.ParseRF2LightmapsFromRfl(reader, sectionEnd);
+                    rf2LightmapData = RflRF2LightmapParser.ParseRF2LightmapsFromRfl(reader, sectionEnd);
                     if (rf2LightmapData != null)
                     {
                         var convertedLightmaps = RflRF2LightmapParser.ConvertToLightmaps(rf2LightmapData);
@@ -361,20 +362,15 @@ namespace redux.parsers
                 foreach (var mv in mesh.Movers) maxUID = Math.Max(maxUID, mv.UID);
                 int coronaNextUID = maxUID + 1;
 
-                // Derive per-corona light range from the map's regular lights.
-                // Base range = median regular light range (already ×3 scaled) halved.
-                // Per-corona range = baseRange × sqrt(Intensity), since in inverse-square
-                // attenuation the effective illumination distance scales as sqrt(I).
-                // This gives bright coronas (I=1.0) the full base range, while dim accent
-                // coronas (I=0.03) get ~17% of it.
-                float coronaBaseRange = 15.0f; // fallback if no regular lights
-                if (mesh.Lights.Count > 0)
-                {
-                    var ranges = mesh.Lights.Select(l => l.Range).OrderBy(r => r).ToList();
-                    float median = ranges[ranges.Count / 2];
-                    coronaBaseRange = median / 2.0f;
-                }
-                Logger.Info(logSrc, $"Corona base range: {coronaBaseRange:F1}m (median/2 of {mesh.Lights.Count} regular lights)");
+                // Fixed corona baking range derived from RF2 baked vertex data analysis:
+                //   - Multi-corona fit on dmpc04 (zero amb, black sun): inv-sq r≈13.5m
+                //   - RF1 linear equivalent: 13.5 × 3 = ~40m
+                //   - Corona intensity/radius_dist have ZERO correlation with effective range
+                //     (r=-0.018, r=-0.031 across 68 maps) → RED2 uses fixed range for all coronas
+                //   - No per-corona intensity scaling (range is intensity-independent)
+                //   - Shadow casting naturally limits reach through geometry
+                float coronaBaseRange = 40.0f;
+                Logger.Info(logSrc, $"Corona base range: {coronaBaseRange:F1}m (fixed, {mesh.Lights.Count} regular lights)");
 
                 int coronaLightCount = 0;
                 int coronaSkipCount = 0;
@@ -402,7 +398,7 @@ namespace redux.parsers
                     light.IsEnabled = true;
                     light.InitialState = (LightState)2; // matches RED's default bake-eligible state
                     light.Color = new Vector4(corona.Color.X, corona.Color.Y, corona.Color.Z, 1.0f);
-                    light.Range = coronaBaseRange * (float)Math.Sqrt(Math.Max(corona.Intensity, 0.01f));
+                    light.Range = coronaBaseRange;
                     light.IntensityAtMaxRange = 0;
                     light.DropoffType = 0;
                     light.TubeLightWidth = 4.0f;
@@ -457,6 +453,37 @@ namespace redux.parsers
                 Logger.Warn(logSrc, $"Converted {coronaLightCount} RF2 coronas to lights ({spotCount} spot, {coronaLightCount - spotCount} point, {coronaSkipCount} black skipped, range={minR:F1}-{maxR:F1}m, UIDs {maxUID + 1}-{coronaNextUID - 1})");
             }
 
+            // Create compensating fill lights for spectrally unexplained baked vertex colors
+            // (e.g. indirect/sky lighting baked by RED2 that has no corresponding light entity)
+            int compensatingLightCount = 0;
+            if (isRF2 && rf2LightmapData != null)
+            {
+                // Compute next available UID across all objects
+                int compMaxUID = 0;
+                foreach (var b in mesh.Brushes) compMaxUID = Math.Max(compMaxUID, b.UID);
+                foreach (var l in mesh.Lights) compMaxUID = Math.Max(compMaxUID, l.UID);
+                foreach (var d in mesh.Decals) compMaxUID = Math.Max(compMaxUID, d.UID);
+                foreach (var e in mesh.Events) compMaxUID = Math.Max(compMaxUID, e.UID);
+                foreach (var t in mesh.Triggers) compMaxUID = Math.Max(compMaxUID, t.UID);
+                foreach (var it in mesh.Items) compMaxUID = Math.Max(compMaxUID, it.UID);
+                foreach (var c in mesh.Clutters) compMaxUID = Math.Max(compMaxUID, c.UID);
+                foreach (var np in mesh.NavPoints) compMaxUID = Math.Max(compMaxUID, np.UID);
+                foreach (var pe in mesh.ParticleEmitters) compMaxUID = Math.Max(compMaxUID, pe.UID);
+                foreach (var pr in mesh.PushRegions) compMaxUID = Math.Max(compMaxUID, pr.UID);
+                foreach (var cr in mesh.ClimbingRegions) compMaxUID = Math.Max(compMaxUID, cr.UID);
+                foreach (var co in mesh.Coronas) compMaxUID = Math.Max(compMaxUID, co.UID);
+                foreach (var mv in mesh.Movers) compMaxUID = Math.Max(compMaxUID, mv.UID);
+                int compNextUID = compMaxUID + 1;
+
+                var compLights = RflRF2LightmapParser.ComputeCompensatingLights(
+                    rf2LightmapData, mesh.Lights, mesh.Coronas, ref compNextUID);
+                if (compLights.Count > 0)
+                {
+                    mesh.Lights.AddRange(compLights);
+                    compensatingLightCount = compLights.Count;
+                }
+            }
+
             // Apply RF2 lightmap multiplier to all light intensities (post-loop since section order varies)
             if (isRF2 && mesh.LightmapMultiplier != 1.0f)
             {
@@ -483,8 +510,8 @@ namespace redux.parsers
                 int recG = Math.Min(255, Math.Max(rawG, (int)Math.Round(rf2MedianBaked.Y * 1.5f)));
                 int recB = Math.Min(255, Math.Max(rawB, (int)Math.Round(rf2MedianBaked.Z * 1.5f)));
 
-                int originalLightCount = mesh.Lights.Count - coronaDerivedLightCount;
-                Logger.Warn(logSrc, $"RF2 light conversion summary: {originalLightCount} lights + {coronaDerivedLightCount} corona-derived lights, rf2lightscale={Config.RF2LightScale}, lmMult={mesh.LightmapMultiplier}, effective={Config.RF2LightScale * mesh.LightmapMultiplier}x");
+                int originalLightCount = mesh.Lights.Count - coronaDerivedLightCount - compensatingLightCount;
+                Logger.Warn(logSrc, $"RF2 light conversion summary: {originalLightCount} lights + {coronaDerivedLightCount} corona-derived + {compensatingLightCount} compensating fill, rf2lightscale={Config.RF2LightScale}, lmMult={mesh.LightmapMultiplier}, effective={Config.RF2LightScale * mesh.LightmapMultiplier}x");
                 Logger.Warn(logSrc, $"RF2 ambient (raw): R={rawR} G={rawG} B={rawB}");
                 Logger.Warn(logSrc, $"RF2 baked median: R={rf2MedianBaked.X} G={rf2MedianBaked.Y} B={rf2MedianBaked.Z}");
                 Logger.Warn(logSrc, $"Recommended RF1 ambient: R={recR} G={recG} B={recB} (set in RED level properties)");
@@ -752,7 +779,8 @@ namespace redux.parsers
                 grp.IsMoving = reader.ReadByte() != 0;
                 Logger.Info(logSrc, $"Group[{i}] IsMoving={grp.IsMoving}");             
 
-                if (grp.IsMoving)
+                // RF2: moving group data is always present in the stream (not conditional on IsMoving)
+                if (grp.IsMoving || RflUtils.IsRF2(rfl_version))
                 {                   grp.MovingData = new MovingGroupData();
                     int numKeyframes = reader.ReadInt32();
                     Logger.Dev(logSrc, $"Group[{i}] KeyframesCount={numKeyframes}");
@@ -849,19 +877,19 @@ namespace redux.parsers
                 grp.Brushes = ReadUidList(reader);
                 Logger.Info(logSrc, $"Group[{i}] BrushesCount={grp.Brushes.Count}");
 
-                // unk RF2 specific fields
-                if ( RflUtils.IsRF2(rfl_version))
+                // RF2: parentUID + conditional pos/rot + 9 int32s
+                if (RflUtils.IsRF2(rfl_version))
                 {
-                    reader.ReadInt32();
-                    reader.ReadInt32();
-                    reader.ReadInt32();
-                    reader.ReadInt32();
-                    reader.ReadInt32();
-                    reader.ReadInt32();
-                    reader.ReadInt32();
-                    reader.ReadInt32();
-                    reader.ReadInt32();
-                    reader.ReadInt32();
+                    int parentUid = reader.ReadInt32();
+                    Logger.Dev(logSrc, $"Group[{i}] ParentUID={parentUid}");
+                    if (parentUid != -1)
+                    {
+                        // parent position (Vector3) + rotation (Matrix3x3)
+                        reader.ReadSingle(); reader.ReadSingle(); reader.ReadSingle();
+                        for (int r = 0; r < 9; r++) reader.ReadSingle();
+                    }
+                    reader.ReadInt32(); // unk
+                    for (int r = 0; r < 8; r++) reader.ReadInt32(); // 8 unk int32s
                 }
 
                 groups.Add(grp);
@@ -1455,6 +1483,276 @@ namespace redux.parsers
 
             int mid = reds.Count / 2;
             return new Vector3(reds[mid], greens[mid], blues[mid]);
+        }
+
+        /// <summary>
+        /// Analyze RF2 baked vertex colors for spectral components that can't be explained
+        /// by any combination of known light/corona sources (e.g. indirect/sky lighting in RED2).
+        /// Creates compensating fill lights to approximate the unexplained contribution.
+        /// </summary>
+        public static List<Light> ComputeCompensatingLights(
+            RF2LightmapData data,
+            List<Light> knownLights,
+            List<Corona> coronas,
+            ref int nextUID)
+        {
+            var result = new List<Light>();
+
+            // 1. Build source color directions from all known light sources
+            var sourceColors = new List<Vector3>();
+            foreach (var light in knownLights)
+            {
+                var c = new Vector3(light.Color.X, light.Color.Y, light.Color.Z);
+                if (c.LengthSquared() > 0.001f)
+                    sourceColors.Add(Vector3.Normalize(c));
+            }
+            foreach (var corona in coronas)
+            {
+                var c = new Vector3(corona.Color.X, corona.Color.Y, corona.Color.Z);
+                if (c.LengthSquared() > 0.001f)
+                    sourceColors.Add(Vector3.Normalize(c));
+            }
+
+            // Deduplicate similar color directions (within 5°)
+            var uniqueSourceDirs = new List<Vector3>();
+            foreach (var sc in sourceColors)
+            {
+                bool isDuplicate = false;
+                foreach (var existing in uniqueSourceDirs)
+                {
+                    if (AngleBetween(sc, existing) < 5f)
+                    {
+                        isDuplicate = true;
+                        break;
+                    }
+                }
+                if (!isDuplicate)
+                    uniqueSourceDirs.Add(sc);
+            }
+
+            if (uniqueSourceDirs.Count == 0)
+            {
+                Logger.Dev(logSrc, "No known light sources — skipping compensating light analysis");
+                return result;
+            }
+
+            // Build reachable color directions: singles + pairwise mixes
+            // Any vertex illuminated by a combination of sources will have a color
+            // direction somewhere between those source directions
+            var reachableDirs = new List<Vector3>(uniqueSourceDirs);
+            for (int i = 0; i < uniqueSourceDirs.Count; i++)
+            {
+                for (int j = i + 1; j < uniqueSourceDirs.Count; j++)
+                {
+                    var mix = uniqueSourceDirs[i] + uniqueSourceDirs[j];
+                    if (mix.LengthSquared() > 0.001f)
+                        reachableDirs.Add(Vector3.Normalize(mix));
+                }
+            }
+
+            Logger.Dev(logSrc, $"Source gamut: {uniqueSourceDirs.Count} unique directions, {reachableDirs.Count} reachable (incl. pairwise)");
+
+            // 2. Collect vertex (position, color) pairs from baked data
+            var vertices = new List<(Vector3 pos, Vector3 color)>();
+            foreach (var group in data.FaceGroups)
+            {
+                foreach (var entry in group.Entries)
+                {
+                    foreach (var tri in entry.TriangleVertices)
+                    {
+                        // Vertex 0
+                        if (tri.Index0 >= 0 && tri.Index0 < entry.VertexPositions.Count)
+                        {
+                            var c = new Vector3(tri.V0_R, tri.V0_G, tri.V0_B);
+                            if (c.LengthSquared() > 100) // skip very dim vertices
+                                vertices.Add((entry.VertexPositions[tri.Index0], c));
+                        }
+                        // Vertex 1
+                        if (tri.Index1 >= 0 && tri.Index1 < entry.VertexPositions.Count)
+                        {
+                            var c = new Vector3(tri.V1_R, tri.V1_G, tri.V1_B);
+                            if (c.LengthSquared() > 100)
+                                vertices.Add((entry.VertexPositions[tri.Index1], c));
+                        }
+                        // Vertex 2
+                        if (tri.Index2 >= 0 && tri.Index2 < entry.VertexPositions.Count)
+                        {
+                            var c = new Vector3(tri.V2_R, tri.V2_G, tri.V2_B);
+                            if (c.LengthSquared() > 100)
+                                vertices.Add((entry.VertexPositions[tri.Index2], c));
+                        }
+                    }
+                }
+            }
+
+            if (vertices.Count < 50)
+            {
+                Logger.Dev(logSrc, $"Too few lit vertices ({vertices.Count}) for compensating light analysis");
+                return result;
+            }
+
+            // 3. Find spectrally unexplained vertices — those whose color direction
+            //    is far from any reachable source color direction
+            float angleThreshold = 20f; // degrees
+            var unexplained = new List<(Vector3 pos, Vector3 color)>();
+
+            foreach (var (pos, color) in vertices)
+            {
+                var colorDir = Vector3.Normalize(color);
+                float minAngle = float.MaxValue;
+                foreach (var dir in reachableDirs)
+                {
+                    float angle = AngleBetween(colorDir, dir);
+                    if (angle < minAngle) minAngle = angle;
+                }
+                if (minAngle > angleThreshold)
+                    unexplained.Add((pos, color));
+            }
+
+            float unexplainedPct = 100f * unexplained.Count / vertices.Count;
+            Logger.Info(logSrc, $"Spectral analysis: {unexplained.Count}/{vertices.Count} vertices ({unexplainedPct:F1}%) have unexplained color (>{angleThreshold}° from source gamut)");
+
+            if (unexplained.Count < 20)
+            {
+                Logger.Info(logSrc, "Few unexplained vertices — no compensating lights needed");
+                return result;
+            }
+
+            // 4. Spatial clustering: bin unexplained vertices into a coarse XZ grid
+            //    so lights are placed where the unexplained colors actually appear
+            Vector3 unexpMin = new Vector3(float.MaxValue);
+            Vector3 unexpMax = new Vector3(float.MinValue);
+            foreach (var (pos, _) in unexplained)
+            {
+                unexpMin = Vector3.Min(unexpMin, pos);
+                unexpMax = Vector3.Max(unexpMax, pos);
+            }
+            Vector3 unexpExtent = unexpMax - unexpMin;
+
+            // Grid cell size: divide longest XZ axis into ~4 bins (gives up to 16 XZ cells)
+            float cellSize = Math.Max(8f, Math.Max(unexpExtent.X, unexpExtent.Z) / 4f);
+            int gridNX = Math.Max(1, (int)Math.Ceiling(unexpExtent.X / cellSize));
+            int gridNZ = Math.Max(1, (int)Math.Ceiling(unexpExtent.Z / cellSize));
+
+            // Accumulate per-cell: sum of colors, sum of positions, count, max Y
+            var cellColorSum = new Dictionary<(int, int), Vector3>();
+            var cellPosSum = new Dictionary<(int, int), Vector3>();
+            var cellCount = new Dictionary<(int, int), int>();
+            var cellMaxY = new Dictionary<(int, int), float>();
+
+            foreach (var (pos, color) in unexplained)
+            {
+                int cx = Math.Clamp((int)((pos.X - unexpMin.X) / cellSize), 0, gridNX - 1);
+                int cz = Math.Clamp((int)((pos.Z - unexpMin.Z) / cellSize), 0, gridNZ - 1);
+                var key = (cx, cz);
+
+                if (!cellCount.ContainsKey(key))
+                {
+                    cellColorSum[key] = Vector3.Zero;
+                    cellPosSum[key] = Vector3.Zero;
+                    cellCount[key] = 0;
+                    cellMaxY[key] = float.MinValue;
+                }
+                cellColorSum[key] += color;
+                cellPosSum[key] += pos;
+                cellCount[key]++;
+                if (pos.Y > cellMaxY[key]) cellMaxY[key] = pos.Y;
+            }
+
+            // Build cluster list from cells with enough vertices (min 5)
+            const int minVerticesPerCell = 5;
+            const int maxCompLights = 8;
+            var clusters = new List<(Vector3 centroid, Vector3 avgColor, int count, float maxY)>();
+            foreach (var key in cellCount.Keys)
+            {
+                if (cellCount[key] >= minVerticesPerCell)
+                {
+                    int n = cellCount[key];
+                    clusters.Add((
+                        cellPosSum[key] / n,
+                        cellColorSum[key] / n,
+                        n,
+                        cellMaxY[key]
+                    ));
+                }
+            }
+
+            // Sort by vertex count descending and cap at maxCompLights
+            clusters.Sort((a, b) => b.count.CompareTo(a.count));
+            if (clusters.Count > maxCompLights)
+                clusters = clusters.GetRange(0, maxCompLights);
+
+            if (clusters.Count == 0)
+            {
+                Logger.Info(logSrc, "Unexplained vertices too scattered for clustering — no compensating lights");
+                return result;
+            }
+
+            // 5. Create a fill light above each cluster centroid
+            //    Position above the cluster's highest vertex so it shines down onto the surfaces
+            Logger.Warn(logSrc, $"Creating {clusters.Count} compensating fill lights for {unexplained.Count} spectrally unexplained vertices ({unexplainedPct:F1}%), grid {gridNX}×{gridNZ} cells ({cellSize:F0}m)");
+
+            foreach (var (centroid, clusterColor, count, maxY) in clusters)
+            {
+                float maxCh = Math.Max(clusterColor.X, Math.Max(clusterColor.Y, clusterColor.Z));
+                if (maxCh < 1f) continue;
+                Vector3 normalizedColor = clusterColor / maxCh;
+
+                // Place light above cluster: offset Y above highest vertex in cluster
+                float elevation = maxY + cellSize * 1.5f;
+                // Range: enough to reach from elevated position down to cluster centroid + margin
+                float vertDist = elevation - centroid.Y;
+                float range = (vertDist + cellSize) * 2f;
+
+                // Intensity: calibrate so contribution at centroid ≈ average unexplained brightness
+                // RF1 linear at distance vertDist with range R: factor = 1 - vertDist/R
+                float attenAtCentroid = Math.Max(0.1f, 1f - vertDist / range);
+                float avgBrightness = maxCh / 255f;
+                float intensity = avgBrightness / attenAtCentroid;
+                intensity = Math.Min(intensity, 0.5f); // cap for subtle fill
+
+                var lightPos = new Vector3(centroid.X, elevation, centroid.Z);
+
+                Logger.Warn(logSrc, $"  Cluster: {count} verts at ({centroid.X:F1},{centroid.Y:F1},{centroid.Z:F1}), color=({normalizedColor.X:F2},{normalizedColor.Y:F2},{normalizedColor.Z:F2}), light at Y={elevation:F1}, range={range:F1}m, intensity={intensity:F3}");
+
+                var light = new Light();
+                light.UID = nextUID++;
+                light.ClassName = "Light";
+                light.Position = lightPos;
+                light.Rotation = Matrix4x4.Identity;
+                light.ScriptName = "";
+                light.HiddenInEditor = false;
+                light.Dynamic = false;
+                light.Fade = false;
+                light.ShadowCasting = true; // shadows ensure only exposed surfaces get this light
+                light.IsEnabled = true;
+                light.Type = LightType.Point;
+                light.InitialState = (LightState)2;
+                light.Color = new Vector4(normalizedColor.X, normalizedColor.Y, normalizedColor.Z, 1.0f);
+                light.Range = range;
+                light.FOV = 15f;
+                light.FOVDropoff = 15f;
+                light.IntensityAtMaxRange = 0;
+                light.DropoffType = 0;
+                light.TubeLightWidth = 4.0f;
+                light.OnIntensity = intensity;
+                light.OnTime = 1.0f;
+                light.OnTimeVariation = 0;
+                light.OffIntensity = 0;
+                light.OffTime = 1.0f;
+                light.OffTimeVariation = 0;
+
+                result.Add(light);
+            }
+
+            return result;
+        }
+
+        private static float AngleBetween(Vector3 a, Vector3 b)
+        {
+            float dot = Vector3.Dot(a, b);
+            dot = Math.Clamp(dot, -1f, 1f);
+            return MathF.Acos(dot) * (180f / MathF.PI);
         }
     }
 

@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Numerics;
 
 namespace redux.utilities
@@ -70,6 +70,56 @@ namespace redux.utilities
         unk_200 =       0x00000200  // RF2 only, used on AI geo helper brushes
     }
 
+    // RF1 face flags (stored on Face, written to RFG)
+    [System.Flags]
+    public enum FaceFlag : ushort
+    {
+        None            = 0x0000,
+        ShowSky         = 0x0001, // face is a sky portal (renders skybox behind it)
+        Mirrored        = 0x0002, // face texture is mirrored
+        Liquid          = 0x0004, // face is a liquid surface
+        Detail          = 0x0008, // face is a detail surface
+        ScrollTexture   = 0x0010, // face texture scrolls (speeds from scroll table)
+        FullBright      = 0x0020, // face is not affected by lighting
+        Alpha           = 0x0040, // face has alpha transparency
+        Hole            = 0x0080, // face is shoot-through / alpha-cutout
+        LightmapRes0    = 0x0100, // lightmap resolution bit 0
+        LightmapRes1    = 0x0200, // lightmap resolution bit 1
+        LightmapResMask = 0x0300, // lightmap resolution (0=lowest, 1=low, 2=high, 3=highest)
+        Invisible       = 0x2000, // face is not rendered
+    }
+
+    // RF2 face flags (32-bit, read from RF2 RFLs)
+    // Lower 10 bits (0x03FF) and bit 13 (0x2000) are shared with RF1.
+    // Upper bits are RF2-specific and must be stripped before RF1 export.
+    [System.Flags]
+    public enum RF2FaceFlag : uint
+    {
+        // shared with RF1
+        ShowSky         = 0x00000001,
+        Mirrored        = 0x00000002,
+        Liquid          = 0x00000004,
+        Detail          = 0x00000008,
+        ScrollTexture   = 0x00000010,
+        FullBright      = 0x00000020,
+        Alpha           = 0x00000040,
+        Hole            = 0x00000080,
+        LightmapRes0    = 0x00000100,
+        LightmapRes1    = 0x00000200,
+        Invisible       = 0x00002000,
+
+        // RF2-specific upper bits (observed across 101 RF2 RFLs)
+        Unk_0x0400      = 0x00000400, // bit 10
+        Unk_0x0800      = 0x00000800, // bit 11
+        Unk_0x1000      = 0x00001000, // bit 12
+        Unk_0x4000      = 0x00004000, // bit 14
+        InlineScroll    = 0x00008000, // bit 15 — 2 float scroll values follow in stream (not a face property)
+        Unk_0x10000     = 0x00010000, // bit 16
+
+        // mask for bits valid in RF1 RFG format
+        RF1Mask         = 0x000023FF, // bits 0-9 + bit 13
+    }
+
     public class Face
     {
         public List<int> Vertices { get; set; } = new List<int>();
@@ -79,22 +129,22 @@ namespace redux.utilities
         public int LightmapResolution
         {
             get => (FaceFlags >> 8) & 0x3;
-            // (0 = lowest, 1 = low, 2 = high, 3 = highest)
+            // (0 = lowest, 1 = low, 2 = high, 3 = highest)
         }
         public uint SmoothingGroups { get; set; }
         public int FaceId { get; set; }
         public float ScrollU { get; set; }
         public float ScrollV { get; set; }
         public Vector3 Normal { get; set; } = Vector3.UnitZ; // Default fallback
-        public bool HasHoles => (FaceFlags & 0x80) != 0;
-        public bool HasAlpha => (FaceFlags & 0x40) != 0;
-        public bool FullBright => (FaceFlags & 0x20) != 0;
-        public bool ScrollTexture => (FaceFlags & 0x10) != 0;
-        public bool IsDetail => (FaceFlags & 0x08) != 0;
-        public bool LiquidSurface => (FaceFlags & 0x04) != 0;
-        public bool Mirrored => (FaceFlags & 0x02) != 0;
-        public bool ShowSky => (FaceFlags & 0x01) != 0;
-        public bool IsInvisible => (FaceFlags & 0x2000) != 0;
+        public bool HasHoles => (FaceFlags & (ushort)FaceFlag.Hole) != 0;
+        public bool HasAlpha => (FaceFlags & (ushort)FaceFlag.Alpha) != 0;
+        public bool FullBright => (FaceFlags & (ushort)FaceFlag.FullBright) != 0;
+        public bool ScrollTexture => (FaceFlags & (ushort)FaceFlag.ScrollTexture) != 0;
+        public bool IsDetail => (FaceFlags & (ushort)FaceFlag.Detail) != 0;
+        public bool LiquidSurface => (FaceFlags & (ushort)FaceFlag.Liquid) != 0;
+        public bool Mirrored => (FaceFlags & (ushort)FaceFlag.Mirrored) != 0;
+        public bool ShowSky => (FaceFlags & (ushort)FaceFlag.ShowSky) != 0;
+        public bool IsInvisible => (FaceFlags & (ushort)FaceFlag.Invisible) != 0;
 
     }
     public enum LightType : byte
@@ -372,7 +422,7 @@ namespace redux.utilities
         public int NumVertices;
         public int NumChunks;
         public byte[] DataBlock;
-        public int Unknown1;      // always –1
+        public int Unknown1;      // always -1
 
         public ChunkInfo[] ChunkInfos;
         public int NumPropPoints;
@@ -587,7 +637,7 @@ namespace redux.utilities
         public float Radius { get; set; }
         public NavPointType Type { get; set; }
         public bool Directional { get; set; }
-        public Matrix4x4? Rotation { get; set; } 
+        public Matrix4x4? Rotation { get; set; }
         public bool Cover { get; set; }
         public bool Hide { get; set; }
         public bool Crunch { get; set; }

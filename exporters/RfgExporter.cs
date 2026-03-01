@@ -1111,7 +1111,7 @@ namespace redux.exporters
 
                 // --- Strip unsupported flags if needed ---
                 var exportFlags = brush.Solid.Flags;
-                bool wasGeoable = false;
+                bool isGeoable = ((SolidFlags)exportFlags & SolidFlags.Geoable) != 0;
                 if (Config.SetRF2GeoableNonDetail)
                 {
                     var before = (SolidFlags)exportFlags;
@@ -1119,14 +1119,13 @@ namespace redux.exporters
                     if ((before & SolidFlags.Detail) != 0 && (after & SolidFlags.Detail) == 0)
                     {
                         Logger.Debug(logSrc, $"Removing detail flag from RF2 geoable brush {brush.UID}.");
-                        wasGeoable = true;
                     }
                     exportFlags = (uint)after;
                 }
                 exportFlags = (uint)SolidFlagUtils.MakeRF1SafeFlags((SolidFlags)exportFlags);
 
                 writer.Write(exportFlags);
-                writer.Write(wasGeoable ? -1 : brush.Solid.Life);
+                writer.Write(isGeoable ? -1 : brush.Solid.Life);
                 writer.Write(brush.Solid.State);
             }
         }

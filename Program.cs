@@ -8,7 +8,7 @@ namespace redux
 {
     class Program
     {
-        private const string Version = "0.2.8";
+        private const string Version = "0.2.9";
         private const string logSrc = "REDUX";
         static void Main(string[] args)
         {
@@ -568,6 +568,7 @@ namespace redux
             Console.WriteLine("Other options (boolean flags):");
             Console.WriteLine("  -loglevel <debug|dev|info|warn|error> - Set logging verbosity level (default info)");
             Console.WriteLine("  -itemswap <class> - Replace all items in exported .rfg with the specified class");
+            Console.WriteLine("  -coronaswap <class> - Add clutter objects at RF2 corona positions (in addition to converted lights)");
             Console.WriteLine("  -skeleton <file> - Skeleton mesh (.v3c/.v3m) when converting .rfa to .gltf");
             Console.WriteLine("  -anim <file> - Embed .rfa animation when exporting .gltf");
             Console.WriteLine("  -animname <name> - Override embedded animation clip name");
