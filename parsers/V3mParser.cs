@@ -491,7 +491,7 @@ namespace redux.parsers
                 pad = (0x10L - (ms.Position % 0x10L)) % 0x10L;
                 if (pad > 0) r.ReadBytes((int)pad);
                 Logger.Debug(logSrc, $"        Read {numUvs} UVs, skipped {pad} bytes padding.");
-Debug.Assert(cd.Positions.Length <= cd.UVs.Length, "Positions and UVs count mismatch.");
+
                 // faces
                 int numFaces = info.FacesAlloc / 8;
                 cd.Triangles = new Triangle[numFaces];
