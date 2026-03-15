@@ -268,6 +268,7 @@ namespace redux.parsers
 
                 var brush = new Brush();
 
+                brush.TextureName = $"{submeshName}_LOD{lodIdx}";
                 brush.Vertices = positions;
                 brush.UVs = uvs;
                 brush.Indices = indices;
