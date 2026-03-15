@@ -2,6 +2,7 @@
 using redux.utilities;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Numerics;
@@ -165,31 +166,9 @@ namespace redux.parsers
             Logger.Debug(logSrc, $"numUnknown1 = {numUnknown1}, skipping {numUnknown1 * 28} bytes");
             reader.BaseStream.Seek(numUnknown1 * 28, SeekOrigin.Current);
 
-#if false
-            // One brush per LOD
             for (int lodIdx = 0; lodIdx < numLods; lodIdx++)
             {
                 var lod = allLods[lodIdx];
-                var brush = new Brush();
-                brush.Solid = new Solid();
-
-                brush.TextureName = $"{submeshName}_LOD{lodIdx}";
-                brush.Vertices = new List<Vector3>();
-                brush.UVs = new List<Vector2>();
-                brush.Indices = new List<int>();
-                brush.PropPoints = new List<redux.utilities.PropPoint>();
-
-                // Copy prop points
-                foreach (var pp in lod.PropPoints)
-                {
-                    brush.PropPoints.Add(new redux.utilities.PropPoint
-                    {
-                        Name = pp.Name,
-                        Position = pp.Position,
-                        Orientation = pp.Orientation,
-                        ParentIndex = pp.ParentIndex
-                    });
-                }
 
                 var positions = new List<Vector3>();
                 var uvs = new List<Vector2>();
@@ -210,8 +189,11 @@ namespace redux.parsers
                     foreach (var pos in chunkData.Positions)
                         positions.Add(pos);
 
-                    foreach (var uv in chunkData.UVs)
-                        uvs.Add(uv);
+                    Debug.Assert(chunkData.Positions.Length <= chunkData.UVs.Length, "The number of positions must not exceed the number of UVs");
+                    for (int vi = 0; vi < chunkData.Positions.Length; vi++)
+                    {
+                        uvs.Add(chunkData.UVs[vi]);
+                    }
 
                     for (int vi = 0; vi < chunkData.Positions.Length; vi++)
                     {
@@ -282,15 +264,31 @@ namespace redux.parsers
                         indices.Add(i1);
                         indices.Add(i2);
                     }
-                }
+                }//for each chunk
+
+                var brush = new Brush();
 
                 brush.Vertices = positions;
                 brush.UVs = uvs;
                 brush.Indices = indices;
-                brush.Solid.Faces = faces;
                 brush.JointIndices = jointIndices;
                 brush.JointWeights = jointWeights;
 
+                // Copy prop points
+                brush.PropPoints = new List<redux.utilities.PropPoint>();
+                foreach (var pp in lod.PropPoints)
+                {
+                    brush.PropPoints.Add(new redux.utilities.PropPoint
+                    {
+                        Name = pp.Name,
+                        Position = pp.Position,
+                        Orientation = pp.Orientation,
+                        ParentIndex = pp.ParentIndex
+                    });
+                }
+
+                brush.Solid = new Solid();
+                brush.Solid.Faces = faces;
                 foreach (var matName in submeshMaterials)
                     brush.Solid.Textures.Add(matName);
 
@@ -298,137 +296,7 @@ namespace redux.parsers
                 Logger.Debug(logSrc,
                     $"  → Created Brush “{brush.TextureName}”: Vertices={positions.Count}, Faces={faces.Count}, Materials={submeshMaterials.Count}");
             }
-#else
-            {            // Export only the most detailed LOD.
-                const int lodIdx = 0;
-                var lod = allLods[lodIdx];
 
-                // One brush per chunk
-                for (int ci = 0; ci < lod.NumChunks; ci++)
-                {
-                    var positions = new List<Vector3>();
-                    var uvs = new List<Vector2>();
-                    var faces = new List<Face>();
-                    var indices = new List<int>();
-                    var jointIndices = new List<Vector4>();
-                    var jointWeights = new List<Vector4>();
-
-                    //
-                    var info = lod.ChunkInfos[ci];
-                    var chunkData = lod.Chunks[ci];
-                    int baseIndex = positions.Count;
-
-                    Logger.Debug(logSrc,
-                        $"  BUILDING Brush for LOD#{lodIdx}, Chunk[{ci}]: Pos={chunkData.Positions.Length}, UVs={chunkData.UVs.Length}, Triangles={chunkData.Triangles.Length}");
-
-                    foreach (var pos in chunkData.Positions)
-                        positions.Add(pos);
-
-                    foreach (var uv in chunkData.UVs)
-                        uvs.Add(uv);
-
-                    for (int vi = 0; vi < chunkData.Positions.Length; vi++)
-                    {
-                        if (chunkData.BoneLinks != null && chunkData.BoneLinks.Length > 0)
-                        {
-                            var link = chunkData.BoneLinks[vi];
-                            // byte[4] each for Weights and Bones
-                            float w0 = link.Weights[0] / 255f;
-                            float w1 = link.Weights[1] / 255f;
-                            float w2 = link.Weights[2] / 255f;
-                            float w3 = link.Weights[3] / 255f;
-                            float sum = w0 + w1 + w2 + w3;
-                            if (sum > 1e-6f)
-                            {
-                                w0 /= sum;
-                                w1 /= sum;
-                                w2 /= sum;
-                                w3 /= sum;
-                            }
-                            else
-                            {
-                                w0 = 1f;
-                                w1 = 0f;
-                                w2 = 0f;
-                                w3 = 0f;
-                            }
-                            jointWeights.Add(new Vector4(w0, w1, w2, w3));
-
-                            float j0 = (link.Bones[0] == 0xFF || link.Weights[0] == 0) ? 0 : link.Bones[0];
-                            float j1 = (link.Bones[1] == 0xFF || link.Weights[1] == 0) ? 0 : link.Bones[1];
-                            float j2 = (link.Bones[2] == 0xFF || link.Weights[2] == 0) ? 0 : link.Bones[2];
-                            float j3 = (link.Bones[3] == 0xFF || link.Weights[3] == 0) ? 0 : link.Bones[3];
-                            jointIndices.Add(new Vector4(j0, j1, j2, j3));
-                        }
-                        else
-                        {
-                            // No bone‐link info → put a “zero” influence on bone 0
-                            jointWeights.Add(new Vector4(1, 0, 0, 0));
-                            jointIndices.Add(new Vector4(0, 0, 0, 0));
-                        }
-                    }
-
-                    for (int f = 0; f < chunkData.Triangles.Length; f++)
-                    {
-                        var tri = chunkData.Triangles[f];
-                        int i0 = baseIndex + tri.I0;
-                        int i1 = baseIndex + tri.I1;
-                        int i2 = baseIndex + tri.I2;
-                        ushort ff = tri.Flags;
-                        int textureIdxRaw = lod.ChunkHeaders[ci];
-                        int textureIdx = ResolveChunkTextureIndex(textureIdxRaw, lod, submeshMaterials);
-
-                        var face = new Face
-                        {
-                            TextureIndex = textureIdx,
-                            Vertices = new List<int> { i0, i1, i2 },
-                            UVs = new List<Vector2>
-                            {
-                                uvs[baseIndex + tri.I0],
-                                uvs[baseIndex + tri.I1],
-                                uvs[baseIndex + tri.I2]
-                            },
-                            FaceFlags = ff
-                        };
-
-                        faces.Add(face);
-                        indices.Add(i0);
-                        indices.Add(i1);
-                        indices.Add(i2);
-                    }
-
-                    var brush = new Brush();
-
-                    brush.Vertices = positions;
-                    brush.UVs = uvs;
-                    brush.Indices = indices;
-                    brush.JointIndices = jointIndices;
-                    brush.JointWeights = jointWeights;
-
-                    // Copy prop points
-                    brush.PropPoints = new List<redux.utilities.PropPoint>();
-                    foreach (var pp in lod.PropPoints)
-                    {
-                        brush.PropPoints.Add(new redux.utilities.PropPoint
-                        {
-                            Name = pp.Name,
-                            Position = pp.Position,
-                            Orientation = pp.Orientation,
-                            ParentIndex = pp.ParentIndex
-                        });
-                    }
-
-                    brush.Solid = new Solid();
-                    brush.Solid.Faces = faces;
-                    foreach (var matName in submeshMaterials)
-                        brush.Solid.Textures.Add(matName);
-
-                    brushes.Add(brush);
-                    Logger.Debug(logSrc,
-                        $"  → Created Brush “{brush.TextureName}”: Vertices={positions.Count}, Faces={faces.Count}, Materials={submeshMaterials.Count}");
-                }//for each chunk
-            }
-#endif
             Logger.Debug(logSrc, "Exiting ParseSubmeshAsBrushes(...)");
             return brushes;
         }
@@ -623,7 +491,7 @@ namespace redux.parsers
                 pad = (0x10L - (ms.Position % 0x10L)) % 0x10L;
                 if (pad > 0) r.ReadBytes((int)pad);
                 Logger.Debug(logSrc, $"        Read {numUvs} UVs, skipped {pad} bytes padding.");
-
+Debug.Assert(cd.Positions.Length <= cd.UVs.Length, "Positions and UVs count mismatch.");
                 // faces
                 int numFaces = info.FacesAlloc / 8;
                 cd.Triangles = new Triangle[numFaces];
