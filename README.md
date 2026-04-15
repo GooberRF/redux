@@ -10,7 +10,7 @@ Examples:
 ------
 - redux.exe -input dm02.rfl -outformat obj -ngons
 - redux.exe -input mymesh.rfg -outformat v3m
-- redux.exe -input dmpc03.rfl -outformat rfg -brushes -textranslate -itemswap "Medical Kit"
+- redux.exe -input dmpc03.rfl -outformat rfg -brushes -textranslate
 - redux.exe -input dm02.rfl -outformat rfg -geomirror X -ngons -brushes
 
 Supported input formats:
@@ -41,7 +41,7 @@ Arguments:
 - `-input <file>`                      Path to the input file.
 - `-outformat <file>`                  Output format.
 - `-itemswap <class>`                  Overwrite all item classes in exported RFGs with the specified item class.
-- `-coronaswap <class>`                Replace all RF2 coronas with clutter objects of the specified class when converting to RFG.
+- `-alpinecoronas`                     Write Alpine Faction corona objects into RFG output from RF2 coronas. Default: true
 - `-rf2lightscale <float>`             RF2 light intensity scale factor. Default: 1.0
 - `-skeleton <file>`                   Skeleton mesh (.v3c/.v3m) when converting .rfa to .gltf
 - `-anim <file>`                       Embed an .rfa animation clip when exporting .gltf

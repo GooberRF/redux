@@ -112,9 +112,6 @@ namespace redux.exporters
             Utils.WriteVString(writer, "static_group");
             writer.Write((byte)0); // is_moving = false
 
-            // Fold coronas into clutter section if a clutter replacement name is specified (since RF1 doesn't have corona objects like RF2)
-            HandleCoronaClutterReplacements(mesh);
-
             // write only the filtered brushes
             WriteBrushesSection(writer, staticBrushes);
 
@@ -740,6 +737,10 @@ namespace redux.exporters
             //for (int i = 0; i < 22; i++)
             //  writer.Write(0);
 
+            // Write Alpine Faction corona chunk for static group (appended after stock sections)
+            if (Config.ExportAlpineCoronas && mesh.Coronas.Count > 0)
+                WriteAlpineCoronaChunk(writer, mesh.Coronas, mirrorActive, posAxis);
+
             // --- MOVING GROUPS ---
             foreach (var grp in mesh.Groups)
             {
@@ -828,6 +829,10 @@ namespace redux.exporters
                 WriteEmptySection(writer); // bolt_emitters
                 WriteEmptySection(writer); // targets
                 WriteEmptySection(writer); // push_regions
+
+                // Alpine corona chunk for moving groups (empty — coronas are in static group only)
+                if (Config.ExportAlpineCoronas)
+                    WriteAlpineCoronaChunk(writer, new List<Corona>(), false, Config.MirrorAxis.None);
             }
 
             Logger.Info(logSrc, "RFG export complete.");
@@ -1130,103 +1135,75 @@ namespace redux.exporters
             }
         }
 
-        public static void HandleCoronaClutterReplacements(Mesh mesh)
+        /// <summary>
+        /// Writes an Alpine Faction corona chunk (0x0AFBAE03) into the RFG stream.
+        /// Format: chunk_id(u32) + chunk_size(u32) + count(u32) + per-corona data.
+        /// </summary>
+        private static void WriteAlpineCoronaChunk(BinaryWriter writer, List<Corona> coronas,
+            bool mirrorActive, Config.MirrorAxis posAxis)
         {
-            // 1) collect Corona UIDs
-            var coronaClutterUIDs = new List<int>();
-            if (!string.IsNullOrEmpty(Config.CoronaClutterName))
+            const uint AlpineCoronaChunkId = 0x0AFBAE03;
+
+            // Write chunk header — we'll backfill the size after writing all corona data
+            writer.Write(AlpineCoronaChunkId);
+            long sizePos = writer.BaseStream.Position;
+            writer.Write((uint)0); // placeholder for chunk size
+
+            long dataStart = writer.BaseStream.Position;
+            writer.Write(coronas.Count);
+
+            foreach (var c in coronas)
             {
-                // 2) for each corona, add a Clutter
-                foreach (var c in mesh.Coronas)
-                {
-                    coronaClutterUIDs.Add(c.UID);
+                // UID
+                writer.Write(c.UID);
 
-                    mesh.Clutters.Add(new Clutter
-                    {
-                        UID = c.UID,
-                        ClassName = Config.CoronaClutterName,
-                        ScriptName = c.ScriptName,
-                        Position = c.Position,
-                        Rotation = Matrix4x4.Identity,
-                        HiddenInEditor = false,
-                        Skin = "",
-                        Links = new List<int>()
-                    });
+                // Position
+                var pos = mirrorActive ? MirrorPosAboutPivot(c.Position, posAxis, 0f) : c.Position;
+                writer.Write(pos.X); writer.Write(pos.Y); writer.Write(pos.Z);
+
+                // Orientation 3x3: rvec (right), uvec (up), fvec (forward)
+                var R = mirrorActive ? MirrorRotationAboutOrigin(c.Orientation, Config.GeoMirror) : c.Orientation;
+                writer.Write(R.M11); writer.Write(R.M12); writer.Write(R.M13); // rvec
+                writer.Write(R.M21); writer.Write(R.M22); writer.Write(R.M23); // uvec
+                writer.Write(R.M31); writer.Write(R.M32); writer.Write(R.M33); // fvec
+
+                // Script name
+                Utils.WriteVString(writer, c.ScriptName ?? "");
+
+                // Color RGBA (bytes)
+                writer.Write((byte)(c.Color.X * 255f));
+                writer.Write((byte)(c.Color.Y * 255f));
+                writer.Write((byte)(c.Color.Z * 255f));
+                writer.Write((byte)(c.Color.W * 255f));
+
+                // Corona bitmap
+                Utils.WriteVString(writer, c.CoronaBitmap ?? "");
+
+                // Corona properties
+                writer.Write(c.ConeAngle);
+                writer.Write(c.Intensity);
+                writer.Write(c.RadiusDistance);
+                writer.Write(c.RadiusScale);
+                writer.Write(c.DiminishDistance);
+
+                // Volumetric bitmap + conditional height/length
+                Utils.WriteVString(writer, c.VolumetricBitmap ?? "");
+                if (!string.IsNullOrEmpty(c.VolumetricBitmap))
+                {
+                    writer.Write(c.VolumetricHeight);
+                    writer.Write(c.VolumetricLength);
                 }
-
-                // 4) create the Unhide event (links → all new clutters)
-                int unhideEventUID = RflUtils.FindNextValidUID(mesh);
-                mesh.Events.Add(new RflEvent
-                {
-                    UID = unhideEventUID,
-                    ClassName = "Unhide",
-                    ScriptName = "Unhide",
-                    Position = Vector3.Zero + new Vector3(0, 3, 0),
-                    HiddenInEditor = false,
-                    Delay = 0f,
-                    Bool1 = false,
-                    Bool2 = false,
-                    Int1 = 0,
-                    Int2 = 0,
-                    Float1 = 0f,
-                    Float2 = 0f,
-                    Str1 = "",
-                    Str2 = "",
-                    Links = new List<int>(coronaClutterUIDs),
-                    RawColor = 0xFF00FFFF
-                });
-
-                // 5) create the Route_Node event (links → Unhide)
-                int routeNodeEventUID = RflUtils.FindNextValidUID(mesh);
-                mesh.Events.Add(new RflEvent
-                {
-                    UID = routeNodeEventUID,
-                    ClassName = "Route_Node",
-                    ScriptName = "Route_Node",
-                    Position = Vector3.Zero + new Vector3(0, 2, 0),
-                    HiddenInEditor = false,
-                    Delay = 0f,
-                    Bool1 = false,
-                    Bool2 = false,
-                    Int1 = 2, // invert
-                    Int2 = 0,
-                    Float1 = 0f,
-                    Float2 = 0f,
-                    Str1 = "",
-                    Str2 = "",
-                    Links = new List<int> { unhideEventUID },
-                    RawColor = 0xFF00FFFF
-                });
-
-                // 7) create the auto‐trigger (links → Route_Node)
-                int TriggerUID = RflUtils.FindNextValidUID(mesh);
-                mesh.Triggers.Add(new Trigger
-                {
-                    UID = TriggerUID,
-                    ScriptName = "Redux Trigger Auto",
-                    HiddenInEditor = false,
-                    Shape = TriggerShape.Sphere,
-                    ResetsAfter = 0f,
-                    ResetsTimes = -1,
-                    UseKeyRequired = false,
-                    KeyName = "",
-                    WeaponActivates = false,
-                    ActivatedBy = TriggerActivatedBy.AllObjects,
-                    IsNpc = false,
-                    IsAuto = true,
-                    InVehicle = false,
-                    Position = Vector3.Zero + new Vector3(0, 1, 0),
-                    SphereRadius = 1f,
-                    AirlockRoomUID = -1,
-                    AttachedToUID = -1,
-                    UseClutterUID = -1,
-                    Disabled = false,
-                    ButtonActiveTime = 0f,
-                    InsideTime = 0f,
-                    Team = TriggerTeam.None,
-                    Links = new List<int> { routeNodeEventUID }
-                });
             }
+
+            // Backfill chunk size
+            long dataEnd = writer.BaseStream.Position;
+            uint chunkSize = (uint)(dataEnd - dataStart);
+            writer.BaseStream.Position = sizePos;
+            writer.Write(chunkSize);
+            writer.BaseStream.Position = dataEnd;
+
+            Logger.Info(logSrc, $"Wrote Alpine corona chunk: {coronas.Count} coronas, {chunkSize} bytes");
         }
+
     }
 }

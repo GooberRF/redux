@@ -24,7 +24,7 @@ namespace redux.utilities
         public static float RF2LightScale { get; set; } = 1.0f;
         public static bool FlipNormals { get; set; } = false;
         public static string ReplacementItemName { get; set; } = "";
-        public static string CoronaClutterName { get; set; } = "";
+        public static bool ExportAlpineCoronas { get; set; } = true;
         public enum LogLevel
         {
             Debug,
