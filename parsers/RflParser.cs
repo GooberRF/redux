@@ -44,6 +44,7 @@ namespace redux.parsers
             bool isAlpine = version >= 0x12C;
             bool isRF1 = version <= 0xC8 || isAlpine;   // <= 201 or >= 300
             bool isRF2 = version == 0x127;                      // 295
+            mesh.IsRF2Source = isRF2;
 
             string levelName = ReadVString(reader);
             string modName = "";

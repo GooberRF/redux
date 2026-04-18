@@ -108,6 +108,17 @@ namespace redux.exporters
                 .Where(b => !movingBrushUIDs.Contains(b.UID))
                 .ToList();
 
+            // Strip RF2 "breakable invisible trigger" brushes — an RF2-only pattern that
+            // has no RF1 equivalent (box, invisible textures, detail, life=10).
+            if (mesh.IsRF2Source)
+            {
+                int before = staticBrushes.Count;
+                staticBrushes = staticBrushes.Where(b => !IsRF2BreakableInvisibleTrigger(b)).ToList();
+                int removed = before - staticBrushes.Count;
+                if (removed > 0)
+                    Logger.Info(logSrc, $"Skipped {removed} RF2 breakable invisible trigger brush(es)");
+            }
+
             // write the “static_group” header
             Utils.WriteVString(writer, "static_group");
             writer.Write((byte)0); // is_moving = false
@@ -410,9 +421,12 @@ namespace redux.exporters
             }
 
             // --- Clutters Section ---
-            Logger.Dev(logSrc, $"Writing clutters: count={mesh.Clutters.Count}");
-            writer.Write(mesh.Clutters.Count);
-            foreach (var c in mesh.Clutters)
+            // RF2 clutter is exported as Alpine Faction mesh objects (appended after stock sections)
+            // rather than stock clutter, so the native clutter count here is zero for RF2 sources.
+            var nativeClutters = mesh.IsRF2Source ? new List<Clutter>() : mesh.Clutters;
+            Logger.Dev(logSrc, $"Writing clutters: count={nativeClutters.Count}");
+            writer.Write(nativeClutters.Count);
+            foreach (var c in nativeClutters)
             {
                 // UID
                 writer.Write(c.UID);
@@ -736,6 +750,11 @@ namespace redux.exporters
 
             //for (int i = 0; i < 22; i++)
             //  writer.Write(0);
+
+            // Write Alpine Faction mesh chunk for static group (RF2 clutter → Alpine mesh objects).
+            // No-op inside the helper if there are no mesh entries to write.
+            if (mesh.IsRF2Source)
+                WriteAlpineMeshChunkFromClutters(writer, mesh.Clutters, mirrorActive, posAxis);
 
             // Write Alpine Faction corona chunk for static group (appended after stock sections)
             if (Config.ExportAlpineCoronas && mesh.Coronas.Count > 0)
@@ -1207,6 +1226,84 @@ namespace redux.exporters
             writer.BaseStream.Position = dataEnd;
 
             Logger.Info(logSrc, $"Wrote Alpine corona chunk: {coronas.Count} coronas, {chunkSize} bytes");
+        }
+        // Detects an RF2-only "breakable invisible trigger" brush: a 6-quad (or 12-tri) box
+        // flagged detail with a finite life (i.e. breakable, not -1), where at least 5 of 6
+        // quads (or 10 of 12 tris) use an "invisible" texture. The 1-face allowance covers
+        // variants that mix in a real texture on one side. Drives break-on-shot trigger
+        // flows unique to RF2.
+        private static bool IsRF2BreakableInvisibleTrigger(Brush b)
+        {
+            var solid = b.Solid;
+            if (solid == null) return false;
+            if (solid.Life < 0) return false;
+            if ((solid.Flags & (uint)SolidFlags.Detail) == 0) return false;
+
+            int faceCount = solid.Faces.Count;
+            int minInvisible;
+            if (faceCount == 6 && solid.Faces.All(f => f.Vertices.Count == 4))
+                minInvisible = 5;
+            else if (faceCount == 12 && solid.Faces.All(f => f.Vertices.Count == 3))
+                minInvisible = 10;
+            else
+                return false;
+
+            int invisibleCount = 0;
+            foreach (var f in solid.Faces)
+            {
+                if (f.TextureIndex < 0 || f.TextureIndex >= solid.Textures.Count) continue;
+                var tex = solid.Textures[f.TextureIndex];
+                if (!string.IsNullOrEmpty(tex) && tex.IndexOf("invisible", StringComparison.OrdinalIgnoreCase) >= 0)
+                    invisibleCount++;
+            }
+            return invisibleCount >= minInvisible;
+        }
+
+        private static void WriteAlpineMeshChunkFromClutters(BinaryWriter writer, List<Clutter> clutters,
+            bool mirrorActive, Config.MirrorAxis posAxis)
+        {
+            const uint AlpineMeshChunkId = 0x0AFBAE01;
+
+            if (clutters.Count == 0) return;
+
+            writer.Write(AlpineMeshChunkId);
+            long sizePos = writer.BaseStream.Position;
+            writer.Write((uint)0); // placeholder for chunk size
+
+            long dataStart = writer.BaseStream.Position;
+            writer.Write((uint)clutters.Count);
+
+            foreach (var c in clutters)
+            {
+                writer.Write(c.UID);
+
+                var pos = mirrorActive ? MirrorPosAboutPivot(c.Position, posAxis, 0f) : c.Position;
+                writer.Write(pos.X); writer.Write(pos.Y); writer.Write(pos.Z);
+
+                var R = mirrorActive ? MirrorRotationAboutOrigin(c.Rotation, Config.GeoMirror) : c.Rotation;
+                writer.Write(R.M11); writer.Write(R.M12); writer.Write(R.M13); // rvec
+                writer.Write(R.M21); writer.Write(R.M22); writer.Write(R.M23); // uvec
+                writer.Write(R.M31); writer.Write(R.M32); writer.Write(R.M33); // fvec
+
+                Utils.WriteVString(writer, c.ScriptName ?? "");
+                Utils.WriteVString(writer, c.ClassName ?? "");   // mesh_filename
+                Utils.WriteVString(writer, "");                   // state_anim
+
+                writer.Write((byte)0);   // collision_mode
+                writer.Write((byte)0);   // num texture_overrides
+
+                writer.Write(0);         // material
+
+                writer.Write((byte)0);   // is_clutter = false (static mesh only)
+            }
+
+            long dataEnd = writer.BaseStream.Position;
+            uint chunkSize = (uint)(dataEnd - dataStart);
+            writer.BaseStream.Position = sizePos;
+            writer.Write(chunkSize);
+            writer.BaseStream.Position = dataEnd;
+
+            Logger.Info(logSrc, $"Wrote Alpine mesh chunk: {clutters.Count} meshes (from RF2 clutter), {chunkSize} bytes");
         }
 
         // Writes an Alpine Faction brush metadata chunk (0x0AFBAE05) into the RFG stream.

@@ -28,6 +28,7 @@ namespace redux.utilities
         public List<Corona> Coronas { get; } = new List<Corona>();
         public Vector4 AmbientColor { get; set; }
         public float LightmapMultiplier { get; set; } = 1.0f;
+        public bool IsRF2Source { get; set; } = false;
     }
 
     public class Brush
