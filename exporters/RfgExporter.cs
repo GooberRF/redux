@@ -741,6 +741,10 @@ namespace redux.exporters
             if (Config.ExportAlpineCoronas && mesh.Coronas.Count > 0)
                 WriteAlpineCoronaChunk(writer, mesh.Coronas, mirrorActive, posAxis);
 
+            // Write Alpine Faction brush metadata chunk for static group (geoable flags).
+            // No-op inside the helper if no brushes carry metadata.
+            WriteAlpineBrushGroupChunk(writer, staticBrushes);
+
             // --- MOVING GROUPS ---
             foreach (var grp in mesh.Groups)
             {
@@ -1203,6 +1207,48 @@ namespace redux.exporters
             writer.BaseStream.Position = dataEnd;
 
             Logger.Info(logSrc, $"Wrote Alpine corona chunk: {coronas.Count} coronas, {chunkSize} bytes");
+        }
+
+        // Writes an Alpine Faction brush metadata chunk (0x0AFBAE05) into the RFG stream.
+        // Entries are emitted for RF2 geoable brushes (SolidFlags 0x20). brush_index is the
+        // ordinal position of the brush in the group's serialized brush list.
+        // Format: chunk_id(u32) + chunk_size(u32) + version(u32)=1 + entry_size(u16)=6
+        //         + entry_count(u32) + entries[]{brush_index:u32, flags:u8, material:u8}.
+        private static void WriteAlpineBrushGroupChunk(BinaryWriter writer, List<Brush> brushes)
+        {
+            const uint AlpineBrushGroupChunkId = 0x0AFBAE05;
+            const uint ChunkVersion = 1;
+            const ushort EntryByteSize = 6;
+
+            var entries = new List<(uint index, byte flags, byte material)>();
+            for (int i = 0; i < brushes.Count; i++)
+            {
+                var b = brushes[i];
+                if (b.Solid == null) continue;
+                byte flags = 0;
+                if ((b.Solid.Flags & (uint)SolidFlags.Geoable) != 0) flags |= 0x1;
+                if (flags != 0)
+                    entries.Add(((uint)i, flags, (byte)0));
+            }
+
+            if (entries.Count == 0) return;
+
+            uint dataSize = sizeof(uint) + sizeof(ushort) + sizeof(uint)
+                + (uint)entries.Count * EntryByteSize;
+
+            writer.Write(AlpineBrushGroupChunkId);
+            writer.Write(dataSize);
+            writer.Write(ChunkVersion);
+            writer.Write(EntryByteSize);
+            writer.Write((uint)entries.Count);
+            foreach (var e in entries)
+            {
+                writer.Write(e.index);
+                writer.Write(e.flags);
+                writer.Write(e.material);
+            }
+
+            Logger.Info(logSrc, $"Wrote Alpine brush props chunk: {entries.Count} entries, {dataSize} bytes");
         }
 
     }

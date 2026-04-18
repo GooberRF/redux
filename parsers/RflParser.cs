@@ -564,18 +564,20 @@ namespace redux.parsers
                 c.Position = new Vector3(px, py, pz);
                 Logger.Dev(logSrc, $"Corona[{i}] Pos = ({px:F3}, {py:F3}, {pz:F3})");
 
-                // Rotation matrix: 9 floats (36 bytes) per rf2.exe FUN_005289f0
-                // Stream order: row3(right), row1(forward), row2(up)
+                // Rotation matrix: 9 floats (36 bytes). RF2 RFL corona stream orders the rows as
+                // FORWARD, UP, RIGHT (reverse of RF1's right/up/forward). Verified empirically:
+                // ceiling coronas pointing down consistently have stream[0..2] = (0,-1,0), and
+                // right = forward × up holds across all observed samples (e.g. fwd=(0,-1,0)
+                // × up=(0,0,-1) = right=(1,0,0)).
                 float[] rf = new float[9];
                 for (int j = 0; j < 9; j++) rf[j] = reader.ReadSingle();
-                // Map to RF1 convention: Row1=right, Row2=up, Row3=forward(cone dir)
                 c.Orientation = new Matrix4x4(
-                    rf[0], rf[1], rf[2], 0,  // Row1 = right (stream row3)
-                    rf[6], rf[7], rf[8], 0,  // Row2 = up (stream row2)
-                    rf[3], rf[4], rf[5], 0,  // Row3 = forward (stream row1, cone direction)
+                    rf[6], rf[7], rf[8], 0,  // Row1 = right   (stream[6..8])
+                    rf[3], rf[4], rf[5], 0,  // Row2 = up      (stream[3..5])
+                    rf[0], rf[1], rf[2], 0,  // Row3 = forward (stream[0..2], cone direction)
                     0, 0, 0, 1
                 );
-                Vector3 fwd = new Vector3(rf[3], rf[4], rf[5]);
+                Vector3 fwd = new Vector3(rf[0], rf[1], rf[2]);
                 Logger.Dev(logSrc, $"Corona[{i}] Direction = ({fwd.X:F3}, {fwd.Y:F3}, {fwd.Z:F3})");
 
                 c.ScriptName = Utils.ReadVString(reader);

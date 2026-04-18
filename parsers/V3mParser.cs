@@ -209,8 +209,8 @@ namespace redux.parsers
                     foreach (var pos in chunkData.Positions)
                         positions.Add(pos);
 
-                    foreach (var uv in chunkData.UVs)
-                        uvs.Add(uv);
+                    for (int vi = 0; vi < chunkData.Positions.Length; vi++)
+                        uvs.Add(chunkData.UVs[vi]);
 
                     for (int vi = 0; vi < chunkData.Positions.Length; vi++)
                     {
