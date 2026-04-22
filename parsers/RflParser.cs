@@ -156,16 +156,19 @@ namespace redux.parsers
                     mesh.MPRespawnPoints.AddRange(RflMpRespawnPointParser.ParseMpRespawnPoints(reader, sectionEnd));
                     reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
                 }
-                else if (sectionType == 0x00000a00) // particle_emitters (RF1 format, also present in some RF2 RFLs; RF2 runtime uses 0x7677)
+                else if (sectionType == 0x00000a00) // particle_emitters (RF1 only)
                 {
                     Logger.Debug(logSrc, $"Found particle_emitters section (0x0A00) at 0x{sectionHeaderPos:X8}, size={sectionSize}");
                     mesh.ParticleEmitters.AddRange(RflParticleEmitterParser.ParseParticleEmittersFromRfl(reader, sectionEnd, version));
                     reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
                 }
-                else if (sectionType == 0x7677 && isRF2) // particle_emitters (RF2 only - RF1 uses 0x0A00)
+                else if (sectionType == 0x7677 && isRF2) // mirrors (RF2 only)
                 {
-                    // RF2 particle emitters use a simpler class-based format (not compatible with RF1 parser)
-                    Logger.Info(logSrc, $"Found RF2 particle_emitters section (0x7677) at 0x{sectionHeaderPos:X8}, size={sectionSize} (not yet implemented for RF2)");
+                    // rf2.exe FUN_0048f350 consumes this as the mirror table. Each entry is a
+                    // Mirror-class object (UID + class VString + pos + 3x3 rot + script VString +
+                    // hidden byte + per-mirror params); the runtime pairs entries with brush
+                    // faces that carry face_flag 0x8000 to render planar reflections
+                    Logger.Info(logSrc, $"Skipping RF2 mirrors section (0x7677) at 0x{sectionHeaderPos:X8}, size={sectionSize} — no RF1 equivalent");
                     reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
                 }
                 else if (sectionType == 0x00000600) // events
@@ -512,15 +515,15 @@ namespace redux.parsers
                 int recB = Math.Min(255, Math.Max(rawB, (int)Math.Round(rf2MedianBaked.Z * 1.5f)));
 
                 int originalLightCount = mesh.Lights.Count - coronaDerivedLightCount - compensatingLightCount;
-                Logger.Warn(logSrc, $"RF2 light conversion summary: {originalLightCount} lights + {coronaDerivedLightCount} corona-derived + {compensatingLightCount} compensating fill, rf2lightscale={Config.RF2LightScale}, lmMult={mesh.LightmapMultiplier}, effective={Config.RF2LightScale * mesh.LightmapMultiplier}x");
-                Logger.Warn(logSrc, $"RF2 ambient (raw): R={rawR} G={rawG} B={rawB}");
-                Logger.Warn(logSrc, $"RF2 baked median: R={rf2MedianBaked.X} G={rf2MedianBaked.Y} B={rf2MedianBaked.Z}");
-                Logger.Warn(logSrc, $"Recommended RF1 ambient: R={recR} G={recG} B={recB} (set in RED level properties)");
+                mesh.PostConversionSummary.Add($"RF2 light conversion summary: {originalLightCount} lights + {coronaDerivedLightCount} corona-derived + {compensatingLightCount} compensating fill, rf2lightscale={Config.RF2LightScale}, lmMult={mesh.LightmapMultiplier}, effective={Config.RF2LightScale * mesh.LightmapMultiplier}x");
+                mesh.PostConversionSummary.Add($"RF2 ambient (raw): R={rawR} G={rawG} B={rawB}");
+                mesh.PostConversionSummary.Add($"RF2 baked median: R={rf2MedianBaked.X} G={rf2MedianBaked.Y} B={rf2MedianBaked.Z}");
+                mesh.PostConversionSummary.Add($"Recommended RF1 ambient: R={recR} G={recG} B={recB} (set in RED level properties)");
 
                 // Fog settings
                 if (levelProperties != null)
                 {
-                    Logger.Warn(logSrc, $"RF2 fog: color=({levelProperties.FogR},{levelProperties.FogG},{levelProperties.FogB}) near={levelProperties.FogNear} far={levelProperties.FogFar}");
+                    mesh.PostConversionSummary.Add($"RF2 fog: color=({levelProperties.FogR},{levelProperties.FogG},{levelProperties.FogB}) near={levelProperties.FogNear} far={levelProperties.FogFar}");
                 }
 
                 // Geoable brush UIDs
@@ -531,9 +534,132 @@ namespace redux.parsers
                         geoableUIDs.Add(brush.UID);
                 }
                 if (geoableUIDs.Count > 0)
-                    Logger.Warn(logSrc, $"RF2 geoable brush UIDs ({geoableUIDs.Count}): {string.Join(", ", geoableUIDs)}");
+                    mesh.PostConversionSummary.Add($"RF2 geoable brush UIDs ({geoableUIDs.Count}): {string.Join(", ", geoableUIDs)}");
                 else
-                    Logger.Warn(logSrc, "RF2 geoable brush UIDs: none");
+                    mesh.PostConversionSummary.Add("RF2 geoable brush UIDs: none");
+
+                // Breakable detail brush UIDs: detail flag 0x4 + finite life, excluding
+                // geoable brushes (indestructible via life=-1 override on export) and
+                // brushes that would be stripped as RF2 breakable invisible triggers.
+                var breakableDetailUIDs = new List<int>();
+                foreach (var brush in mesh.Brushes)
+                {
+                    var s = brush.Solid;
+                    if (s == null) continue;
+                    if ((s.Flags & (uint)SolidFlags.Detail) == 0) continue;
+                    if (s.Life < 0) continue;
+                    if ((s.Flags & (uint)SolidFlags.Geoable) != 0) continue;
+                    if (SolidFlagUtils.IsRF2BreakableInvisibleTrigger(brush)) continue;
+                    breakableDetailUIDs.Add(brush.UID);
+                }
+                if (breakableDetailUIDs.Count > 0)
+                    mesh.PostConversionSummary.Add($"Breakable detail brush UIDs ({breakableDetailUIDs.Count}): {string.Join(", ", breakableDetailUIDs)}");
+                else
+                    mesh.PostConversionSummary.Add("Breakable detail brush UIDs: none");
+
+                // Dump any references that point to brushes (helps identify which brushes are
+                // targets of events / triggers / clutter links / keyframe refs).
+                var brushUIDSet = new HashSet<int>(mesh.Brushes.Select(b => b.UID));
+                var refsByBrush = new Dictionary<int, List<string>>();
+                void AddRef(int brushUID, string source)
+                {
+                    if (!refsByBrush.TryGetValue(brushUID, out var list))
+                        refsByBrush[brushUID] = list = new List<string>();
+                    list.Add(source);
+                }
+                foreach (var ev in mesh.Events)
+                    if (ev.Links != null)
+                        foreach (var uid in ev.Links)
+                            if (brushUIDSet.Contains(uid))
+                                AddRef(uid, $"Event UID={ev.UID} class=\"{ev.ClassName}\" script=\"{ev.ScriptName}\"");
+                foreach (var tr in mesh.Triggers)
+                {
+                    if (tr.Links != null)
+                        foreach (var uid in tr.Links)
+                            if (brushUIDSet.Contains(uid))
+                                AddRef(uid, $"Trigger UID={tr.UID} script=\"{tr.ScriptName}\" (via Links)");
+                    if (brushUIDSet.Contains(tr.AttachedToUID))
+                        AddRef(tr.AttachedToUID, $"Trigger UID={tr.UID} script=\"{tr.ScriptName}\" (AttachedToUID)");
+                    if (brushUIDSet.Contains(tr.UseClutterUID))
+                        AddRef(tr.UseClutterUID, $"Trigger UID={tr.UID} script=\"{tr.ScriptName}\" (UseClutterUID)");
+                }
+                foreach (var cl in mesh.Clutters)
+                    if (cl.Links != null)
+                        foreach (var uid in cl.Links)
+                            if (brushUIDSet.Contains(uid))
+                                AddRef(uid, $"Clutter UID={cl.UID} class=\"{cl.ClassName}\" script=\"{cl.ScriptName}\"");
+                foreach (var grp in mesh.Groups)
+                {
+                    var kfs = grp.MovingData?.Keyframes;
+                    if (kfs == null) continue;
+                    foreach (var kf in kfs)
+                    {
+                        if (brushUIDSet.Contains(kf.EventUID))
+                            AddRef(kf.EventUID, $"Keyframe UID={kf.UID} group=\"{grp.Name}\" (EventUID)");
+                        if (brushUIDSet.Contains(kf.ItemUID1))
+                            AddRef(kf.ItemUID1, $"Keyframe UID={kf.UID} group=\"{grp.Name}\" (ItemUID1)");
+                        if (brushUIDSet.Contains(kf.ItemUID2))
+                            AddRef(kf.ItemUID2, $"Keyframe UID={kf.UID} group=\"{grp.Name}\" (ItemUID2)");
+                    }
+                }
+
+                if (refsByBrush.Count == 0)
+                {
+                    Logger.Warn(logSrc, "Brush references: no events/triggers/clutter/keyframes point at any brush");
+                }
+                else
+                {
+                    Logger.Warn(logSrc, $"Brush references: {refsByBrush.Count} brush(es) referenced by other objects");
+                    foreach (var kv in refsByBrush.OrderBy(k => k.Key))
+                    {
+                        Logger.Warn(logSrc, $"  Brush UID={kv.Key} referenced by {kv.Value.Count} object(s):");
+                        foreach (var src in kv.Value)
+                            Logger.Warn(logSrc, $"    - {src}");
+                    }
+                }
+
+                // Per-brush signature dump so invisible-trigger brushes can be distinguished
+                // from similar geometry. `matchInvisTrg` reflects the current heuristic (box
+                // shape + ≥5/6 (or ≥10/12) invisible-textured faces + detail flag + life ≥ 0).
+                Logger.Warn(logSrc, "Per-brush signatures (RF2) — one line per brush:");
+                foreach (var b in mesh.Brushes)
+                {
+                    var s = b.Solid;
+                    if (s == null) continue;
+
+                    int faceCount = s.Faces.Count;
+                    bool allQuads = faceCount > 0 && s.Faces.All(f => f.Vertices.Count == 4);
+                    bool allTris = faceCount > 0 && s.Faces.All(f => f.Vertices.Count == 3);
+                    bool isDetail = (s.Flags & (uint)SolidFlags.Detail) != 0;
+
+                    int invisibleFaceCount = 0;
+                    foreach (var f in s.Faces)
+                    {
+                        if (f.TextureIndex < 0 || f.TextureIndex >= s.Textures.Count) continue;
+                        var tx = s.Textures[f.TextureIndex];
+                        if (!string.IsNullOrEmpty(tx) && tx.IndexOf("invisible", StringComparison.OrdinalIgnoreCase) >= 0)
+                            invisibleFaceCount++;
+                    }
+
+                    bool matchInvisTrg =
+                        s.Life >= 0 && isDetail &&
+                        ((faceCount == 6 && allQuads && invisibleFaceCount >= 5) ||
+                         (faceCount == 12 && allTris && invisibleFaceCount >= 10));
+
+                    var distinctFaceFlags = s.Faces.Select(f => f.FaceFlags).Distinct()
+                        .OrderBy(x => x).Select(x => $"0x{x:X4}");
+                    var distinctTextures = s.Textures ?? new List<string>();
+
+                    Logger.Warn(logSrc,
+                        $"  Brush UID={b.UID} matchInvisTrg={matchInvisTrg} " +
+                        $"faces={faceCount} verts={b.Vertices.Count} " +
+                        $"flags=0x{s.Flags:X8} life={s.Life} state={s.State} " +
+                        $"allQuads={allQuads} allTris={allTris} " +
+                        $"invisFaces={invisibleFaceCount}/{faceCount} " +
+                        $"faceFlags=[{string.Join(",", distinctFaceFlags)}] " +
+                        $"texCount={distinctTextures.Count} " +
+                        $"textures=[{string.Join(",", distinctTextures)}]");
+                }
             }
 
             return mesh;
@@ -597,13 +723,19 @@ namespace redux.parsers
                 reader.ReadByte(); // bool (v>=0xe8)
                 
 
-                c.CoronaBitmap = Utils.ReadVString(reader);
-                Logger.Dev(logSrc, $"Corona[{i}] CoronaBitmap = \"{c.CoronaBitmap}\"");
+                {
+                    var raw = Utils.ReadVString(reader);
+                    c.CoronaBitmap = Config.TranslateRF2Textures
+                        ? RF2TextureTranslator.TranslateRF2Texture(raw)
+                        : (Config.InsertRF2TexturePrefix ? RF2TextureTranslator.InsertRxPrefix(raw) : raw);
+                    Logger.Dev(logSrc, $"Corona[{i}] CoronaBitmap = \"{raw}\" → \"{c.CoronaBitmap}\"");
+                }
 
                 c.ConeAngle = reader.ReadSingle();
                 Logger.Dev(logSrc, $"Corona[{i}] ConeAngle = {c.ConeAngle}");
                 c.Intensity = reader.ReadSingle();
                 Logger.Dev(logSrc, $"Corona[{i}] Intensity = {c.Intensity}");
+                // Stream order: cone_angle, intensity, radius_distance, radius_scale, diminish_distance.
                 c.RadiusDistance = reader.ReadSingle();
                 Logger.Dev(logSrc, $"Corona[{i}] RadiusDistance = {c.RadiusDistance}");
                 c.RadiusScale = reader.ReadSingle();
@@ -611,8 +743,13 @@ namespace redux.parsers
                 c.DiminishDistance = reader.ReadSingle();
                 Logger.Dev(logSrc, $"Corona[{i}] DiminishDistance = {c.DiminishDistance}");
 
-                c.VolumetricBitmap = Utils.ReadVString(reader);
-                Logger.Dev(logSrc, $"Corona[{i}] VolumetricBitmap = \"{c.VolumetricBitmap}\"");
+                {
+                    var raw = Utils.ReadVString(reader);
+                    c.VolumetricBitmap = Config.TranslateRF2Textures
+                        ? RF2TextureTranslator.TranslateRF2Texture(raw)
+                        : (Config.InsertRF2TexturePrefix ? RF2TextureTranslator.InsertRxPrefix(raw) : raw);
+                    Logger.Dev(logSrc, $"Corona[{i}] VolumetricBitmap = \"{raw}\" → \"{c.VolumetricBitmap}\"");
+                }
 
                 if (!string.IsNullOrEmpty(c.VolumetricBitmap))
                 {

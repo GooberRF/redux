@@ -113,7 +113,7 @@ namespace redux.exporters
             if (mesh.IsRF2Source)
             {
                 int before = staticBrushes.Count;
-                staticBrushes = staticBrushes.Where(b => !IsRF2BreakableInvisibleTrigger(b)).ToList();
+                staticBrushes = staticBrushes.Where(b => !SolidFlagUtils.IsRF2BreakableInvisibleTrigger(b)).ToList();
                 int removed = before - staticBrushes.Count;
                 if (removed > 0)
                     Logger.Info(logSrc, $"Skipped {removed} RF2 breakable invisible trigger brush(es)");
@@ -751,19 +751,6 @@ namespace redux.exporters
             //for (int i = 0; i < 22; i++)
             //  writer.Write(0);
 
-            // Write Alpine Faction mesh chunk for static group (RF2 clutter → Alpine mesh objects).
-            // No-op inside the helper if there are no mesh entries to write.
-            if (mesh.IsRF2Source)
-                WriteAlpineMeshChunkFromClutters(writer, mesh.Clutters, mirrorActive, posAxis);
-
-            // Write Alpine Faction corona chunk for static group (appended after stock sections)
-            if (Config.ExportAlpineCoronas && mesh.Coronas.Count > 0)
-                WriteAlpineCoronaChunk(writer, mesh.Coronas, mirrorActive, posAxis);
-
-            // Write Alpine Faction brush metadata chunk for static group (geoable flags).
-            // No-op inside the helper if no brushes carry metadata.
-            WriteAlpineBrushGroupChunk(writer, staticBrushes);
-
             // --- MOVING GROUPS ---
             foreach (var grp in mesh.Groups)
             {
@@ -853,13 +840,23 @@ namespace redux.exporters
                 WriteEmptySection(writer); // targets
                 WriteEmptySection(writer); // push_regions
 
-                // Alpine corona chunk for moving groups (empty — coronas are in static group only)
-                if (Config.ExportAlpineCoronas)
-                    WriteAlpineCoronaChunk(writer, new List<Corona>(), false, Config.MirrorAxis.None);
             }
+
+            // Alpine Faction chunks
+            if (mesh.IsRF2Source)
+                WriteAlpineMeshChunkFromClutters(writer, mesh.Clutters, mirrorActive, posAxis);
+            if (Config.ExportAlpineCoronas && mesh.Coronas.Count > 0)
+                WriteAlpineCoronaChunk(writer, mesh.Coronas, mirrorActive, posAxis);
+            WriteAlpineBrushGroupChunk(writer, staticBrushes);
 
             Logger.Info(logSrc, "RFG export complete.");
 
+            if (mesh.PostConversionSummary.Count > 0)
+            {
+                Logger.Warn(logSrc, "=== Conversion summary ===");
+                foreach (var line in mesh.PostConversionSummary)
+                    Logger.Warn(logSrc, line);
+            }
         }
 
         private static void WriteEmptySection(BinaryWriter writer)
@@ -955,7 +952,7 @@ namespace redux.exporters
                 if ((flags & 0x10) != 0) flagDescriptions.Add("steam?");
                 if ((flags & 0x20) != 0) flagDescriptions.Add("geoable");
                 if ((flags & 0x40) != 0) flagDescriptions.Add("unk_40");
-                if ((flags & 0x200) != 0) flagDescriptions.Add("unk_200");
+                if ((flags & 0x200) != 0) flagDescriptions.Add("breakable_invisible_trigger");
                 var flagsSummary = flagDescriptions.Count > 0 ? string.Join(", ", flagDescriptions) : "none";
                 Logger.Dev(logSrc,
                     $"  → brush UID={brush.UID}, verts={brush.Vertices.Count}, faces={brush.Solid.Faces.Count}, " +
@@ -1202,8 +1199,14 @@ namespace redux.exporters
                 // Corona bitmap
                 Utils.WriteVString(writer, c.CoronaBitmap ?? "");
 
-                // Corona properties
-                writer.Write(c.ConeAngle);
+                // Corona properties.
+                // RF2 RFL stores cone_angle as already-halved (rf2.exe's RFL loader
+                // FUN_0048e540 stores the raw value in the same runtime slot that the
+                // glares.tbl parser FUN_0040b440 halves via *0.5). AF's Alpine corona
+                // chunk expects the *full* angle and multiplies by 0.5 at runtime load
+                // (alpine_corona.cpp: `gi->cone_angle = info.cone_angle * 0.5f`).
+                // Double the RF2 value to land on the correct rendered cone.
+                writer.Write(c.ConeAngle * 2.0f);
                 writer.Write(c.Intensity);
                 writer.Write(c.RadiusDistance);
                 writer.Write(c.RadiusScale);
@@ -1226,37 +1229,6 @@ namespace redux.exporters
             writer.BaseStream.Position = dataEnd;
 
             Logger.Info(logSrc, $"Wrote Alpine corona chunk: {coronas.Count} coronas, {chunkSize} bytes");
-        }
-        // Detects an RF2-only "breakable invisible trigger" brush: a 6-quad (or 12-tri) box
-        // flagged detail with a finite life (i.e. breakable, not -1), where at least 5 of 6
-        // quads (or 10 of 12 tris) use an "invisible" texture. The 1-face allowance covers
-        // variants that mix in a real texture on one side. Drives break-on-shot trigger
-        // flows unique to RF2.
-        private static bool IsRF2BreakableInvisibleTrigger(Brush b)
-        {
-            var solid = b.Solid;
-            if (solid == null) return false;
-            if (solid.Life < 0) return false;
-            if ((solid.Flags & (uint)SolidFlags.Detail) == 0) return false;
-
-            int faceCount = solid.Faces.Count;
-            int minInvisible;
-            if (faceCount == 6 && solid.Faces.All(f => f.Vertices.Count == 4))
-                minInvisible = 5;
-            else if (faceCount == 12 && solid.Faces.All(f => f.Vertices.Count == 3))
-                minInvisible = 10;
-            else
-                return false;
-
-            int invisibleCount = 0;
-            foreach (var f in solid.Faces)
-            {
-                if (f.TextureIndex < 0 || f.TextureIndex >= solid.Textures.Count) continue;
-                var tex = solid.Textures[f.TextureIndex];
-                if (!string.IsNullOrEmpty(tex) && tex.IndexOf("invisible", StringComparison.OrdinalIgnoreCase) >= 0)
-                    invisibleCount++;
-            }
-            return invisibleCount >= minInvisible;
         }
 
         private static void WriteAlpineMeshChunkFromClutters(BinaryWriter writer, List<Clutter> clutters,

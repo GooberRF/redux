@@ -29,6 +29,7 @@ namespace redux.utilities
         public Vector4 AmbientColor { get; set; }
         public float LightmapMultiplier { get; set; } = 1.0f;
         public bool IsRF2Source { get; set; } = false;
+        public List<string> PostConversionSummary { get; } = new List<string>();
     }
 
     public class Brush
@@ -67,8 +68,8 @@ namespace redux.utilities
         unk_08 =        0x00000008,
         EmitsSteam =    0x00000010,
         Geoable =       0x00000020, // RF2 only
-        unk_40 =        0x00000040, // RF2 only
-        unk_200 =       0x00000200  // RF2 only, used on AI geo helper brushes
+        unk_40 =        0x00000040, // RF2 only — observed on jump-pad detail brushes
+        BreakableInvisibleTrigger = 0x00000200  // RF2 only, aka AI geo helper — breakable invisible trigger brush
     }
 
     // RF1 face flags (stored on Face, written to RFG)

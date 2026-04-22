@@ -404,6 +404,28 @@ namespace redux.utilities
 
             return flags;
         }
+
+        // Detects an RF2-only "breakable invisible trigger" brush
+        public static bool IsRF2BreakableInvisibleTrigger(Brush b)
+        {
+            var solid = b.Solid;
+            if (solid == null) return false;
+            if ((solid.Flags & (uint)SolidFlags.BreakableInvisibleTrigger) == 0) return false;
+            if (solid.Life < 0) return false;
+
+            var faces = solid.Faces;
+            var textures = solid.Textures;
+            if (faces == null || faces.Count == 0 || textures == null) return false;
+
+            int invisibleFaces = 0;
+            foreach (var f in faces)
+            {
+                if (f.TextureIndex < 0 || f.TextureIndex >= textures.Count) continue;
+                if (textures[f.TextureIndex].Contains("invisible", System.StringComparison.OrdinalIgnoreCase))
+                    invisibleFaces++;
+            }
+            return (faces.Count - invisibleFaces) <= 2;
+        }
     }
 
     public static class EmbeddedResourceLoader
@@ -545,7 +567,70 @@ namespace redux.utilities
             AddManualTranslation("mtl_jpad_oct2.tga", "mtl_jumppad01.tga");
             AddManualTranslation("mtl_jpad_oct4.tga", "mtl_jumppad02.tga");
             AddManualTranslation("cpt_012red01.tga", "sld_grf2012red01a.tga");
+            AddManualTranslation("pls_013tabletop01.tga", "pls_grf2013tabletop01a.tga");
+            AddManualTranslation("mar_012sopot05.tga", "sld_grf2012sopot05a.tga");
+            AddManualTranslation("cpt_012banners01.tga", "sld_grf2012banners01a.tga");
+            AddManualTranslation("number_01.tga", "dec_grf2number_01.tga");
+            AddManualTranslation("numbers2.tga", "dec_grf2numbers2.tga");
+            AddManualTranslation("numbers3.tga", "dec_grf2numbers3.tga");
+            AddManualTranslation("numbers_03.tga", "dec_grf2numbers_03.tga");
+            AddManualTranslation("numbers_05.tga", "dec_grf2numbers_05.tga");
+            AddManualTranslation("numbers_07.tga", "dec_grf2numbers_07.tga");
+            AddManualTranslation("numbers_08.tga", "dec_grf2numbers_08.tga");
+            AddManualTranslation("numbers_09.tga", "dec_grf2numbers_09.tga");
+            AddManualTranslation("numbers_10.tga", "dec_grf2numbers_10.tga");
+            AddManualTranslation("numbers_11.tga", "dec_grf2numbers_11.tga");
+            AddManualTranslation("numbers_12.tga", "dec_grf2numbers_12.tga");
+            AddManualTranslation("numbers_13.tga", "dec_grf2numbers_13.tga");
+            AddManualTranslation("numbers_15.tga", "dec_grf2numbers_15.tga");
+            AddManualTranslation("numbers_16.tga", "dec_grf2numbers_16.tga");
+            AddManualTranslation("woo_012tight.tga", "sld_grf2012tighta.tga");
             AddManualTranslation("mtl_122_grate2.tga", "mtl_grf2122_grate.tga");
+            AddManualTranslation("l00-sign2.tga", "dec_grf2l00-sign2.tga");
+            AddManualTranslation("l00-sign3.tga", "dec_grf2l00-sign3.tga");
+            AddManualTranslation("l00-sign4.tga", "dec_grf2l00-sign4.tga");
+            AddManualTranslation("pls_rounds.tga", "pls_polkafloor02_drty.vbm");
+            AddManualTranslation("woo_cardboard.tga", "sld_grf2cardboarda.tga");
+            AddManualTranslation("rx_2level.tga", "dec_grf21level2.tga");
+            AddManualTranslation("cem_dark_floor01xx.tga", "cem_grf2dark_floor01xx.tga");
+            AddManualTranslation("ddrecthilite02.tga", "grf2_ddrecthilite02.tga");
+            AddManualTranslation("dirtyvent.tga", "dec_grf2dirtyvent.tga");
+            AddManualTranslation("Corona_BRw.tga", "grf2_corona_brw.tga");
+            AddManualTranslation("Corona_BRc.tga", "grf2_corona_brc.tga");
+            AddManualTranslation("LightBeam_Blue.tga", "grf2_lightbeam_blue.tga");
+            AddManualTranslation("LightBeam_White.tga", "grf2_lightbeam_white.tga");
+            AddManualTranslation("light.tga", "grf2_light.tga");
+            AddManualTranslation("lightbeam01.tga", "grf2_lightbeam01.tga");
+            AddManualTranslation("lightbeam_amber.tga", "grf2_lightbeam_amber.tga");
+            AddManualTranslation("lightbeam_br.tga", "grf2_lightbeam_br.tga");
+            AddManualTranslation("lightbeam_green.tga", "grf2_lightbeam_green.tga");
+            AddManualTranslation("lightbeam_ltblue.tga", "grf2_lightbeam_ltblue.tga");
+            AddManualTranslation("lightbeam_ltblue01.tga", "grf2_lightbeam_ltblue01.tga");
+            AddManualTranslation("lightbeam_ornge.tga", "grf2_lightbeam_ornge.tga");
+            AddManualTranslation("lightbeam_soft.tga", "grf2_lightbeam_soft.tga");
+            AddManualTranslation("lightbeam_sp_01.tga", "grf2_lightbeam_sp_01.tga");
+            AddManualTranslation("lightbeam_wide.tga", "grf2_lightbeam_wide.tga");
+            AddManualTranslation("lightbeam_wide03.tga", "grf2_lightbeam_wide03.tga");
+            AddManualTranslation("lightcorona01.tga", "grf2_lightcorona01.tga");
+            AddManualTranslation("lightcorona01b.tga", "grf2_lightcorona01b.tga");
+            AddManualTranslation("lightcorona02.tga", "grf2_lightcorona02.tga");
+            AddManualTranslation("lightcorona03.tga", "grf2_lightcorona03.tga");
+            AddManualTranslation("light_02.tga", "grf2_light_02.tga");
+            AddManualTranslation("light_03.tga", "grf2_light_03.tga");
+            AddManualTranslation("light_04.tga", "grf2_light_04.tga");
+            AddManualTranslation("light_lilredf01.tga", "grf2_light_lilredf01.tga");
+            AddManualTranslation("light_lilredflare01.tga", "grf2_light_lilredflare01.tga");
+            AddManualTranslation("light_spot.tga", "grf2_light_spot.tga");
+            AddManualTranslation("light_spot_grill.tga", "grf2_light_spot_grill.tga");
+            AddManualTranslation("corona_br.tga", "grf2_corona_br.tga");
+            AddManualTranslation("corona_brg64.tga", "grf2_corona_brg64.tga");
+            AddManualTranslation("corona_grey.tga", "grf2_corona_grey.tga");
+            AddManualTranslation("corona_lblue.tga", "grf2_corona_lblue.tga");
+            AddManualTranslation("corona_ltblue.tga", "grf2_corona_ltblue.tga");
+            AddManualTranslation("corona_ornge.tga", "grf2_corona_ornge.tga");
+            AddManualTranslation("corona_red.tga", "grf2_corona_red.tga");
+            AddManualTranslation("corona_white.tga", "grf2_corona_white.tga");
+            AddManualTranslation("corona_yellow.tga", "grf2_corona_yellow.tga");
         }
 
         public static void AddManualTranslation(string original, string translated)
