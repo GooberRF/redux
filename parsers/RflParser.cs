@@ -188,7 +188,7 @@ namespace redux.parsers
                 else if (sectionType == 0x00001100) // push_regions
                 {
                     Logger.Debug(logSrc, $"Found push_regions section (0x1100) at 0x{sectionHeaderPos:X8}, size={sectionSize}");
-                    mesh.PushRegions.AddRange(RflPushRegionParser.ParsePushRegionsFromRfl(reader, sectionEnd));
+                    mesh.PushRegions.AddRange(RflPushRegionParser.ParsePushRegionsFromRfl(reader, sectionEnd, isRF2));
                     reader.BaseStream.Seek(sectionEnd, SeekOrigin.Begin);
                 }
                 else if (sectionType == 0x00060000) // triggers
@@ -366,15 +366,29 @@ namespace redux.parsers
                 foreach (var mv in mesh.Movers) maxUID = Math.Max(maxUID, mv.UID);
                 int coronaNextUID = maxUID + 1;
 
-                // Fixed corona baking range derived from RF2 baked vertex data analysis:
-                //   - Multi-corona fit on dmpc04 (zero amb, black sun): inv-sq r≈13.5m
-                //   - RF1 linear equivalent: 13.5 × 3 = ~40m
-                //   - Corona intensity/radius_dist have ZERO correlation with effective range
-                //     (r=-0.018, r=-0.031 across 68 maps) → RED2 uses fixed range for all coronas
-                //   - No per-corona intensity scaling (range is intensity-independent)
-                //   - Shadow casting naturally limits reach through geometry
-                float coronaBaseRange = 40.0f;
-                Logger.Info(logSrc, $"Corona base range: {coronaBaseRange:F1}m (fixed, {mesh.Lights.Count} regular lights)");
+                // Per-map corona falloff fit: we solve for the inv-sq range + intensity scale
+                // that best reproduce the baked vertex colors in corona-dominated regions.
+                // Falls back to (40m, 1.0x) when there aren't enough corona-only samples.
+                // CLI overrides: -rf2coronarange / -rf2coronascale.
+                float coronaBaseRange;
+                float coronaIntensityScale;
+                int fitSamples = 0;
+                if (isRF2 && rf2LightmapData != null)
+                {
+                    var (fitRange, fitScale, nSamples) = RflRF2LightmapParser.FitCoronaFalloff(
+                        rf2LightmapData, mesh.Lights, mesh.Coronas);
+                    coronaBaseRange = Config.RF2CoronaRangeOverride ?? fitRange;
+                    coronaIntensityScale = Config.RF2CoronaScaleOverride ?? fitScale;
+                    fitSamples = nSamples;
+                    Logger.Warn(logSrc, $"Corona falloff fit: range={fitRange:F1}m, intensity={fitScale:F2}x " +
+                        $"({nSamples} corona-only verts); using range={coronaBaseRange:F1}m, intensity={coronaIntensityScale:F2}x");
+                }
+                else
+                {
+                    coronaBaseRange = Config.RF2CoronaRangeOverride ?? 40.0f;
+                    coronaIntensityScale = Config.RF2CoronaScaleOverride ?? 1.0f;
+                    Logger.Info(logSrc, $"Corona base range: {coronaBaseRange:F1}m (no fit data, {mesh.Lights.Count} regular lights)");
+                }
 
                 int coronaLightCount = 0;
                 int coronaSkipCount = 0;
@@ -406,7 +420,7 @@ namespace redux.parsers
                     light.IntensityAtMaxRange = 0;
                     light.DropoffType = 0;
                     light.TubeLightWidth = 4.0f;
-                    light.OnIntensity = corona.Intensity * Config.RF2LightScale;
+                    light.OnIntensity = corona.Intensity * coronaIntensityScale * Config.RF2LightScale;
                     light.OnTime = 1.0f;
                     light.OnTimeVariation = 0;
                     light.OffIntensity = 0;
@@ -1625,6 +1639,158 @@ namespace redux.parsers
             return new Vector3(reds[mid], greens[mid], blues[mid]);
         }
 
+        /// Fits an inverse-square falloff model (1 / (1 + d²/r²)) against the baked vertex colors
+        /// in corona-dominated regions, returning an RF1 linear range and an intensity scale that
+        /// best reproduce the bake.  Returns (40f, 1f, 0) if insufficient data.
+        /// Only considers vertices far from all regular lights (d > 2× range) so the baked value
+        /// is dominated by corona contributions.  Fits two scalars per map:
+        ///   - inv-sq radius r → RF1 linear range = clamp(3r, 10..80 m) (full-cutoff equivalence)
+        ///   - intensity scale = normalized brightness delivered per unit corona strength
+        /// so corona-derived RF1 lights land in the right ballpark for any RF2 map.
+        public static (float Range, float IntensityScale, int Samples) FitCoronaFalloff(
+            RF2LightmapData data,
+            List<Light> regularLights,
+            List<Corona> coronas)
+        {
+            const float DefaultRange = 40f;
+            const float DefaultScale = 1f;
+            if (data == null || coronas == null || coronas.Count == 0)
+                return (DefaultRange, DefaultScale, 0);
+
+            // Collect candidate vertex samples with cached "min distance to any regular light"
+            // so we can progressively relax the filter if too few vertices clear a strict threshold.
+            var candidates = new List<(Vector3 pos, Vector3 normal, Vector3 baked, float lightClearRatio)>();
+            foreach (var group in data.FaceGroups)
+            {
+                foreach (var entry in group.Entries)
+                {
+                    foreach (var tri in entry.TriangleVertices)
+                    {
+                        if (tri.Index0 < 0 || tri.Index0 >= entry.VertexPositions.Count) continue;
+                        if (tri.Index1 < 0 || tri.Index1 >= entry.VertexPositions.Count) continue;
+                        if (tri.Index2 < 0 || tri.Index2 >= entry.VertexPositions.Count) continue;
+                        var p0 = entry.VertexPositions[tri.Index0];
+                        var p1 = entry.VertexPositions[tri.Index1];
+                        var p2 = entry.VertexPositions[tri.Index2];
+                        var rawN = Vector3.Cross(p1 - p0, p2 - p0);
+                        if (rawN.LengthSquared() < 1e-8f) continue;
+                        var normal = Vector3.Normalize(rawN);
+
+                        var triVerts = new (Vector3, Vector3)[] {
+                            (p0, new Vector3(tri.V0_R, tri.V0_G, tri.V0_B)),
+                            (p1, new Vector3(tri.V1_R, tri.V1_G, tri.V1_B)),
+                            (p2, new Vector3(tri.V2_R, tri.V2_G, tri.V2_B)),
+                        };
+                        foreach (var (pos, baked) in triVerts)
+                        {
+                            if (Math.Max(baked.X, Math.Max(baked.Y, baked.Z)) < 1f) continue;
+                            // Record the best (largest) "distance / range" ratio over all regular
+                            // lights — high ratio means farther from light relative to its reach.
+                            float bestRatio = float.MaxValue;
+                            foreach (var l in regularLights)
+                            {
+                                if (l.Range <= 0f) continue;
+                                float ratio = (l.Position - pos).Length() / l.Range;
+                                if (ratio < bestRatio) bestRatio = ratio;
+                            }
+                            if (regularLights.Count == 0) bestRatio = float.MaxValue;
+                            candidates.Add((pos, normal, baked, bestRatio));
+                        }
+                    }
+                }
+            }
+
+            // Pick the strictest threshold that gives ≥100 samples.  The final 0.0 tier accepts
+            // all non-black vertices — the fit picks up some regular-light bleed-through in
+            // densely-lit maps, but produces a usable result rather than falling back to defaults.
+            var samples = new List<(Vector3 pos, Vector3 normal, Vector3 baked)>();
+            foreach (float thresh in new[] { 2.0f, 1.5f, 1.0f, 0.5f, 0.0f })
+            {
+                samples = candidates.Where(c => c.lightClearRatio >= thresh)
+                    .Select(c => (c.pos, c.normal, c.baked)).ToList();
+                if (samples.Count >= 100) break;
+            }
+            if (samples.Count < 100)
+                return (DefaultRange, DefaultScale, samples.Count);
+
+            // Subsample for O(N×M×R) performance
+            const int MaxSamples = 1500;
+            if (samples.Count > MaxSamples)
+            {
+                var rng = new Random(42);
+                samples = samples.OrderBy(_ => rng.Next()).Take(MaxSamples).ToList();
+            }
+
+            // Precompute per-vertex per-corona contribution basis
+            var vertCorona = new List<List<(float d, float ndl, Vector3 colorI)>>(samples.Count);
+            foreach (var (pos, normal, _) in samples)
+            {
+                var row = new List<(float, float, Vector3)>();
+                foreach (var c in coronas)
+                {
+                    var d = (c.Position - pos).Length();
+                    if (d < 0.01f) d = 0.01f;
+                    var dir = (c.Position - pos) / d;
+                    var ndl = Vector3.Dot(normal, dir);
+                    if (ndl > 0f)
+                    {
+                        var cI = new Vector3(c.Color.X, c.Color.Y, c.Color.Z) * c.Intensity;
+                        row.Add((d, ndl, cI));
+                    }
+                }
+                vertCorona.Add(row);
+            }
+
+            // Sweep linear range R (matching RF1's native falloff) and find the best fit.
+            // Predicted baked[c] = scale × Σ_c( max(0, 1 - d/R) × max(0, ndl) × color[c] × I × 255 )
+            // scale is a dimensionless intensity multiplier applied on top of corona.Intensity.
+            // The (R, scale) solution space has a ridge; we pick the smallest R within 10% of the
+            // best MSE, preferring localized falloff over broad-and-dim equivalents.
+            var fits = new List<(float R, float mse, float scale)>();
+            var preds = new Vector3[samples.Count];
+            for (int R10 = 10; R10 <= 200; R10 += 2)  // R ∈ [5m .. 100m] step 1m
+            {
+                float R = R10 * 0.5f;
+                float sumPA = 0f, sumPP = 0f;
+                for (int i = 0; i < samples.Count; i++)
+                {
+                    var p = Vector3.Zero;
+                    foreach (var (d, ndl, cI) in vertCorona[i])
+                    {
+                        if (d >= R) continue;
+                        p += (1f - d / R) * ndl * cI;
+                    }
+                    // Normalize so 1.0 of predicted ≈ 255 baked (color components are in [0..1])
+                    p *= 255f;
+                    preds[i] = p;
+                    sumPA += Vector3.Dot(p, samples[i].baked);
+                    sumPP += p.LengthSquared();
+                }
+                if (sumPP < 1e-6f) continue;
+                float scale = sumPA / sumPP;
+                float totalErr = 0f;
+                for (int i = 0; i < samples.Count; i++)
+                {
+                    var err = scale * preds[i] - samples[i].baked;
+                    totalErr += err.LengthSquared();
+                }
+                float mse = totalErr / (samples.Count * 3);
+                fits.Add((R, mse, scale));
+            }
+
+            if (fits.Count == 0)
+                return (DefaultRange, DefaultScale, samples.Count);
+
+            float globalBestMse = fits.Min(f => f.mse);
+            float mseTolerance = globalBestMse * 1.10f;
+            var acceptable = fits.Where(f => f.mse <= mseTolerance).ToList();
+            var chosen = acceptable.OrderBy(f => f.R).First();
+
+            float linearR = Math.Clamp(chosen.R, 10f, 60f);
+            float intensityScale = Math.Clamp(chosen.scale, 0.1f, 3.0f);
+            return (linearR, intensityScale, samples.Count);
+        }
+
         /// <summary>
         /// Analyze RF2 baked vertex colors for spectral components that can't be explained
         /// by any combination of known light/corona sources (e.g. indirect/sky lighting in RED2).
@@ -2423,7 +2589,7 @@ namespace redux.parsers
     {
         private const string logSrc = "RflPushRegionParser";
 
-        public static List<PushRegion> ParsePushRegionsFromRfl(BinaryReader reader, long sectionEnd)
+        public static List<PushRegion> ParsePushRegionsFromRfl(BinaryReader reader, long sectionEnd, bool isRF2)
         {
             var regions = new List<PushRegion>();
             int count = reader.ReadInt32();
@@ -2432,6 +2598,7 @@ namespace redux.parsers
             for (int i = 0; i < count; i++)
             {
                 var pr = new PushRegion();
+                pr.SourceIsRf2 = isRF2;
 
                 pr.UID = reader.ReadInt32();
                 pr.ClassName = ReadVString(reader);

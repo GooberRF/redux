@@ -22,6 +22,9 @@ namespace redux.utilities
         public static bool SetRF2GeoableNonDetail { get; set; } = false;
         public static bool DumpLightmaps { get; set; } = false;
         public static float RF2LightScale { get; set; } = 1.0f;
+        // When non-null, overrides the auto-fit range/scale for corona-derived lights.
+        public static float? RF2CoronaRangeOverride { get; set; } = null;
+        public static float? RF2CoronaScaleOverride { get; set; } = null;
         public static bool FlipNormals { get; set; } = false;
         public static string ReplacementItemName { get; set; } = "";
         public static bool ExportAlpineCoronas { get; set; } = true;
@@ -591,7 +594,11 @@ namespace redux.utilities
             AddManualTranslation("l00-sign4.tga", "dec_grf2l00-sign4.tga");
             AddManualTranslation("pls_rounds.tga", "pls_polkafloor02_drty.vbm");
             AddManualTranslation("woo_cardboard.tga", "sld_grf2cardboarda.tga");
+            AddManualTranslation("woo_CrateSideRA.tga", "sld_grf2cratesideraa.tga");
+            AddManualTranslation("woo_CrateSideB.tga", "sld_grf2cratesideba.tga");
+            AddManualTranslation("woo_wood002B_128.tga", "sld_grf2wood002b_128a.tga");
             AddManualTranslation("rx_2level.tga", "dec_grf21level2.tga");
+            AddManualTranslation("2level.tga", "dec_grf21level2.tga");
             AddManualTranslation("cem_dark_floor01xx.tga", "cem_grf2dark_floor01xx.tga");
             AddManualTranslation("ddrecthilite02.tga", "grf2_ddrecthilite02.tga");
             AddManualTranslation("dirtyvent.tga", "dec_grf2dirtyvent.tga");

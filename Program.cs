@@ -87,6 +87,20 @@ namespace redux
                     else
                         Logger.Warn(logSrc, $"Invalid value for -rf2lightscale. Using default {Config.RF2LightScale}.");
                 }
+                else if (args[i].Equals("-rf2coronarange", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    if (float.TryParse(args[++i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float range))
+                        Config.RF2CoronaRangeOverride = range;
+                    else
+                        Logger.Warn(logSrc, "Invalid value for -rf2coronarange. Using auto-fit.");
+                }
+                else if (args[i].Equals("-rf2coronascale", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    if (float.TryParse(args[++i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float scale))
+                        Config.RF2CoronaScaleOverride = scale;
+                    else
+                        Logger.Warn(logSrc, "Invalid value for -rf2coronascale. Using auto-fit.");
+                }
                 else if (args[i].Equals("-dumplightmaps", StringComparison.OrdinalIgnoreCase))
                 {
                     Config.DumpLightmaps = true;
@@ -578,6 +592,8 @@ namespace redux
             Console.WriteLine("  -geomirror <X|Y|Z> - Mirror geometry across the given global axis (RFG export only)");
             Console.WriteLine("  -simplenames <true|false> - Use simple Brush_UID names in exports (default false)");
             Console.WriteLine("  -rf2lightscale <float> - RF2 light intensity scale factor (default 1.0)");
+            Console.WriteLine("  -rf2coronarange <float> - Override auto-fit range (m) for RF2 corona-derived lights");
+            Console.WriteLine("  -rf2coronascale <float> - Override auto-fit intensity multiplier for RF2 corona-derived lights");
             Console.WriteLine("  -textranslate <true|false> - RF2 -> RF1 texture name translation (default false)");
             Console.WriteLine("  -geonodetail <true|false> - Remove detail flag from RF2 geoable brushes (default false)");
             Console.WriteLine("  -portalfaces <true|false> - Include portal faces (default true)");
