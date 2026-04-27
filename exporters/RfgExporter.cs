@@ -730,7 +730,16 @@ namespace redux.exporters
                 }
 
                 // strength
-                writer.Write(pr.Strength);
+                // RF2→RF1: jump pads need rescaling because RF2 gravity is 15.0 vs RF1's 9.8.
+                // Energy conservation for equal jump height gives v_rf1 = v_rf2 * sqrt(g_rf1/g_rf2).
+                float strengthOut = pr.Strength;
+                if (pr.SourceIsRf2 && pr.JumpPad)
+                {
+                    const float JumpPadRf2ToRf1 = 0.8083f; // sqrt(9.8 / 15.0)
+                    strengthOut *= JumpPadRf2ToRf1;
+                    Logger.Dev(logSrc, $"  → jump pad strength rescaled RF2→RF1: {pr.Strength} → {strengthOut}");
+                }
+                writer.Write(strengthOut);
 
                 // flags (16‑bit)
                 ushort rawFlags = 0;

@@ -300,6 +300,7 @@ namespace redux.utilities
         public bool Grounded;
         public bool MassIndependent;
         public ushort Turbulence;
+        public bool SourceIsRf2;
     }
     public enum TriggerShape { Sphere = 0, Box = 1 }
     public enum TriggerActivatedBy
