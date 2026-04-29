@@ -515,6 +515,14 @@ namespace redux.parsers.parser_utils
                         scrollV = isSky ? 0f : rf2ScrollV;
                     }
 
+                    // Some RF2 maps have inline scroll values without the 0x10 flag, so RF1 wouldn't
+                    // animate the face. If we read non-zero scroll, force the ScrollTexture flag on.
+                    ushort faceFlagsRF1 = (ushort)(faceFlagsRF2 & (uint)RF2FaceFlag.RF1Mask);
+                    if (Math.Abs(scrollU) > 0.0001f || Math.Abs(scrollV) > 0.0001f)
+                    {
+                        faceFlagsRF1 |= (ushort)FaceFlag.ScrollTexture;
+                    }
+
                     // Triangulate or add polygon faces for RF2
                     if (Config.TriangulatePolygons && faceVerts.Count > 3)
                     {
@@ -530,7 +538,7 @@ namespace redux.parsers.parser_utils
                                 Vertices = new List<int> { faceVerts[0], faceVerts[k], faceVerts[k + 1] },
                                 UVs = new List<Vector2> { faceUVs[0], faceUVs[k], faceUVs[k + 1] },
                                 SmoothingGroups = smoothingGroups,
-                                FaceFlags = (ushort)(faceFlagsRF2 & (uint)RF2FaceFlag.RF1Mask)
+                                FaceFlags = faceFlagsRF1
                             });
                         }
                     }
@@ -545,7 +553,7 @@ namespace redux.parsers.parser_utils
                             Vertices = faceVerts,
                             UVs = faceUVs,
                             SmoothingGroups = smoothingGroups,
-                            FaceFlags = (ushort)(faceFlagsRF2 & (uint)RF2FaceFlag.RF1Mask)
+                            FaceFlags = faceFlagsRF1
                         });
                     }
                 } // end RF2

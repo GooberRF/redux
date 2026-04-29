@@ -1791,11 +1791,9 @@ namespace redux.parsers
             return (linearR, intensityScale, samples.Count);
         }
 
-        /// <summary>
         /// Analyze RF2 baked vertex colors for spectral components that can't be explained
         /// by any combination of known light/corona sources (e.g. indirect/sky lighting in RED2).
         /// Creates compensating fill lights to approximate the unexplained contribution.
-        /// </summary>
         public static List<Light> ComputeCompensatingLights(
             RF2LightmapData data,
             List<Light> knownLights,

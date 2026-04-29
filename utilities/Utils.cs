@@ -596,6 +596,9 @@ namespace redux.utilities
             AddManualTranslation("woo_cardboard.tga", "sld_grf2cardboarda.tga");
             AddManualTranslation("woo_CrateSideRA.tga", "sld_grf2cratesideraa.tga");
             AddManualTranslation("woo_CrateSideB.tga", "sld_grf2cratesideba.tga");
+            AddManualTranslation("SideLogoRed2a.tga", "dec_grf2sidelogored2.tga");
+            AddManualTranslation("SideLogoBlue2a.tga", "dec_grf2sidelogoblue2.tga");
+            AddManualTranslation("woo_wood002_128.tga", "sld_grf2wood002_128a.tga");
             AddManualTranslation("woo_wood002B_128.tga", "sld_grf2wood002b_128a.tga");
             AddManualTranslation("rx_2level.tga", "dec_grf21level2.tga");
             AddManualTranslation("2level.tga", "dec_grf21level2.tga");
