@@ -227,6 +227,16 @@ namespace redux.parsers
                     while (primUvs.Count < posRh.Count)
                         primUvs.Add(Vector2.Zero);
 
+                    List<Vector3> primNormalsRh;
+                    if (prim.attributes.TryGetValue("NORMAL", out int normalAccessor))
+                    {
+                        primNormalsRh = ReadVec3(root, buffer, normalAccessor);
+                    }
+                    else
+                    {
+                        primNormalsRh = new List<Vector3>();
+                    }
+
                     List<int> localIndices = prim.indices.HasValue
                         ? ReadIndices(root, buffer, prim.indices.Value)
                         : Enumerable.Range(0, posRh.Count).ToList();
@@ -244,11 +254,25 @@ namespace redux.parsers
                     }
 
                     int vertexBase = brush.Vertices.Count;
+                    // Pad normals from earlier primitives that lacked them, so indices align with brush.Vertices.
+                    while (brush.Normals.Count < vertexBase)
+                        brush.Normals.Add(Vector3.Zero);
                     for (int i = 0; i < posRh.Count; i++)
                     {
                         Vector3 p = posRh[i];
                         brush.Vertices.Add(new Vector3(-p.X, p.Y, p.Z));
                         brush.UVs.Add(i < primUvs.Count ? primUvs[i] : Vector2.Zero);
+
+                        // Apply the same handedness flip used for positions; zero-vector means "no normal supplied".
+                        if (i < primNormalsRh.Count)
+                        {
+                            Vector3 nRh = primNormalsRh[i];
+                            brush.Normals.Add(new Vector3(-nRh.X, nRh.Y, nRh.Z));
+                        }
+                        else
+                        {
+                            brush.Normals.Add(Vector3.Zero);
+                        }
 
                         if (hasSkin)
                         {

@@ -687,6 +687,11 @@ namespace redux.exporters
                     Vector3 n = cross.LengthSquared() > 1e-8f ? Vector3.Normalize(cross) : Vector3.UnitZ;
                     float d = -Vector3.Dot(n, p0);
 
+                    // Prefer per-vertex normals (preserves smooth shading from the source); fall back to the flat face normal.
+                    Vector3 n0 = ResolveVertexNormal(brush, idx[0], n);
+                    Vector3 n1 = ResolveVertexNormal(brush, idx[i + 1], n);
+                    Vector3 n2 = ResolveVertexNormal(brush, idx[i + 2], n);
+
                     int textureSlot = face.TextureIndex >= 0 ? face.TextureIndex : 0;
                     string textureName = ResolveTextureBaseName(brush, textureSlot);
 
@@ -704,9 +709,9 @@ namespace redux.exporters
 
                     Chunk chunk = entry.Geometry;
 
-                    int v0 = chunk.AddVertex(p0, n, uv0, ji0, jw0);
-                    int v1 = chunk.AddVertex(p1, n, uv1, ji1, jw1);
-                    int v2 = chunk.AddVertex(p2, n, uv2, ji2, jw2);
+                    int v0 = chunk.AddVertex(p0, n0, uv0, ji0, jw0);
+                    int v1 = chunk.AddVertex(p1, n1, uv1, ji1, jw1);
+                    int v2 = chunk.AddVertex(p2, n2, uv2, ji2, jw2);
 
                     chunk.Triangles.Add((v0, v1, v2, face.FaceFlags));
                     chunk.Planes.Add((n, d));
@@ -789,6 +794,18 @@ namespace redux.exporters
 
         private static Vector3 Transform(Brush b, int vi)
             => Vector3.Transform(b.Vertices[vi], b.RotationMatrix) + b.Position;
+
+        // Returns a usable per-vertex normal in the same space as Transform()-ed positions, or the flat-face fallback.
+        private static Vector3 ResolveVertexNormal(Brush b, int vi, Vector3 faceFallback)
+        {
+            if (b.Normals == null || vi < 0 || vi >= b.Normals.Count)
+                return faceFallback;
+            Vector3 src = b.Normals[vi];
+            if (src.LengthSquared() < 1e-6f)
+                return faceFallback;
+            Vector3 rotated = Vector3.TransformNormal(src, b.RotationMatrix);
+            return rotated.LengthSquared() > 1e-8f ? Vector3.Normalize(rotated) : faceFallback;
+        }
 
         private static void WriteFixedString(BinaryWriter w, string s, int len)
         {

@@ -178,13 +178,13 @@ namespace redux.parsers
                 brush.Indices = new List<int>();
                 brush.PropPoints = new List<redux.utilities.PropPoint>();
 
-                // Copy prop points
+                // Copy prop points (apply submesh offset — they share local space with vertices)
                 foreach (var pp in lod.PropPoints)
                 {
                     brush.PropPoints.Add(new redux.utilities.PropPoint
                     {
                         Name = pp.Name,
-                        Position = pp.Position,
+                        Position = pp.Position + offset,
                         Orientation = pp.Orientation,
                         ParentIndex = pp.ParentIndex
                     });
@@ -206,8 +206,9 @@ namespace redux.parsers
                     Logger.Debug(logSrc,
                         $"  BUILDING Brush for LOD#{lodIdx}, Chunk[{ci}]: Pos={chunkData.Positions.Length}, UVs={chunkData.UVs.Length}, Triangles={chunkData.Triangles.Length}");
 
+                    // Vertices are stored in submesh-local space; apply the submesh offset to place them in model space.
                     foreach (var pos in chunkData.Positions)
-                        positions.Add(pos);
+                        positions.Add(pos + offset);
 
                     for (int vi = 0; vi < chunkData.Positions.Length; vi++)
                         uvs.Add(chunkData.UVs[vi]);
@@ -253,7 +254,9 @@ namespace redux.parsers
                         }
                     }
 
-                    for (int f = 0; f < chunkData.Triangles.Length; f++)
+                    // Only the first info.NumFaces triangles are valid; faces_alloc can over-allocate (trailing entries are unused buffer slack).
+                    int numValidFaces = Math.Min(info.NumFaces, chunkData.Triangles.Length);
+                    for (int f = 0; f < numValidFaces; f++)
                     {
                         var tri = chunkData.Triangles[f];
                         int i0 = baseIndex + tri.I0;
@@ -507,18 +510,19 @@ namespace redux.parsers
                 if (pad > 0) r.ReadBytes((int)pad);
                 Logger.Debug(logSrc, $"        Read {numFaces} triangles, skipped {pad} bytes padding.");
 
-                // optional planes
+                // optional planes — count is num_faces (NOT faces_alloc/8); the face buffer can be over-allocated
                 if ((lod.Flags & (uint)LodFlags.TrianglePlanes) != 0)
                 {
-                    cd.Planes = new RFPlane[numFaces];
-                    for (int i = 0; i < numFaces; i++)
+                    int numPlanes = info.NumFaces;
+                    cd.Planes = new RFPlane[numPlanes];
+                    for (int i = 0; i < numPlanes; i++)
                     {
                         cd.Planes[i].Normal = new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
                         cd.Planes[i].Dist = r.ReadSingle();
                     }
                     pad = (0x10L - (ms.Position % 0x10L)) % 0x10L;
                     if (pad > 0) r.ReadBytes((int)pad);
-                    Logger.Debug(logSrc, $"        Read {numFaces} planes, skipped {pad} bytes padding.");
+                    Logger.Debug(logSrc, $"        Read {numPlanes} planes, skipped {pad} bytes padding.");
                 }
                 else
                 {
