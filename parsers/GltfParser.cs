@@ -300,6 +300,9 @@ namespace redux.parsers
                     if (string.IsNullOrWhiteSpace(brush.TextureName))
                         brush.TextureName = Path.GetFileNameWithoutExtension(rfTexture);
 
+                    // V3M face bit 0x20 = two-sided (disables backface culling). Maps from glTF material.doubleSided.
+                    ushort faceFlags = IsMaterialDoubleSided(root, prim.material) ? (ushort)0x20 : (ushort)0;
+
                     for (int i = 0; i + 2 < localIndices.Count; i += 3)
                     {
                         int i0 = localIndices[i];
@@ -321,7 +324,7 @@ namespace redux.parsers
                             TextureIndex = textureSlot,
                             Vertices = new List<int> { g0, g1, g2 },
                             UVs = new List<Vector2> { brush.UVs[g0], brush.UVs[g1], brush.UVs[g2] },
-                            FaceFlags = 0
+                            FaceFlags = faceFlags
                         });
                     }
                 }
@@ -1118,6 +1121,16 @@ namespace redux.parsers
             }
 
             return $"material_{mi}.tga";
+        }
+
+        private static bool IsMaterialDoubleSided(GltfRoot root, int? materialIndex)
+        {
+            if (!materialIndex.HasValue || root.materials == null)
+                return false;
+            int mi = materialIndex.Value;
+            if (mi < 0 || mi >= root.materials.Count)
+                return false;
+            return root.materials[mi].doubleSided == true;
         }
 
         private static int ResolveUvSetIndex(GltfRoot root, int? materialIndex)
@@ -2065,6 +2078,7 @@ namespace redux.parsers
         private class Material
         {
             public string? name { get; set; }
+            public bool? doubleSided { get; set; }
             public PbrMetallicRoughness? pbrMetallicRoughness { get; set; }
             public JsonElement? extras { get; set; }
         }
