@@ -406,12 +406,26 @@ namespace redux.exporters
             if (lodCount <= 0)
                 return Array.Empty<float>();
 
+            float[]? configured = Config.LodDistances;
+            int configuredCount = configured?.Length ?? 0;
+            if (configuredCount > lodCount)
+                Logger.Dev(logSrc, $"Configured LOD distances ({configuredCount}) exceed submesh LOD count ({lodCount}); extra values ignored.");
+
+            // Configured distances map positionally onto LODs; any LOD past the end of the
+            // list keeps the built-in progression (0, 10, 100, 1000, ...) from the last value.
             var distances = new float[lodCount];
-            distances[0] = 0f;
-            if (lodCount >= 2)
-                distances[1] = 10f;
-            for (int i = 2; i < lodCount; i++)
-                distances[i] = distances[i - 1] * 10f;
+            for (int i = 0; i < lodCount; i++)
+            {
+                if (i < configuredCount)
+                    distances[i] = configured![i];
+                else if (i == 0)
+                    distances[i] = 0f;
+                else
+                    distances[i] = distances[i - 1] > 0f ? distances[i - 1] * 10f : 10f;
+            }
+
+            if (configuredCount > 0)
+                Logger.Dev(logSrc, $"LOD distances: {string.Join(", ", distances)}");
             return distances;
         }
 

@@ -42,6 +42,7 @@ Arguments:
 - `-outformat <file>`                  Output format.
 - `-itemswap <class>`                  Overwrite all item classes in exported RFGs with the specified item class.
 - `-alpinecoronas`                     Write Alpine Faction corona objects into RFG output from RF2 coronas. Default: true
+- `-loddistances <list>`               LOD switch distances for V3M/V3C output, one per LOD (e.g. `0,20,80,300`). Default: 0,10,100,1000,...
 - `-rf2lightscale <float>`             RF2 light intensity scale factor. Default: 1.0
 - `-skeleton <file>`                   Skeleton mesh (.v3c/.v3m) when converting .rfa to .gltf
 - `-anim <file>`                       Embed an .rfa animation clip when exporting .gltf

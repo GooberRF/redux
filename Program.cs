@@ -101,6 +101,17 @@ namespace redux
                     else
                         Logger.Warn(logSrc, "Invalid value for -rf2coronascale. Using auto-fit.");
                 }
+                else if ((args[i].Equals("-loddistances", StringComparison.OrdinalIgnoreCase) ||
+                          args[i].Equals("-loddists", StringComparison.OrdinalIgnoreCase) ||
+                          args[i].Equals("-loddist", StringComparison.OrdinalIgnoreCase)) &&
+                         i + 1 < args.Length)
+                {
+                    string raw = args[++i];
+                    if (TryParseLodDistances(raw, out float[] lodDistances))
+                        Config.LodDistances = lodDistances;
+                    else
+                        Logger.Warn(logSrc, $"Invalid value '{raw}' for -loddistances. Expected comma-separated distances, e.g. 0,20,80,300. Using defaults.");
+                }
                 else if (args[i].Equals("-dumplightmaps", StringComparison.OrdinalIgnoreCase))
                 {
                     Config.DumpLightmaps = true;
@@ -543,6 +554,43 @@ namespace redux
             }
         }
 
+        // Parses a LOD distance list such as "0,20,80,300" (commas, semicolons or spaces).
+        // Values map positionally onto LOD indices; LODs beyond the list keep the default progression.
+        private static bool TryParseLodDistances(string raw, out float[] distances)
+        {
+            distances = Array.Empty<float>();
+            if (string.IsNullOrWhiteSpace(raw))
+                return false;
+
+            string[] parts = raw.Split(new[] { ',', ';', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0)
+                return false;
+
+            var parsed = new float[parts.Length];
+            for (int i = 0; i < parts.Length; i++)
+            {
+                if (!float.TryParse(parts[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float value))
+                    return false;
+                if (value < 0f || float.IsNaN(value) || float.IsInfinity(value))
+                    return false;
+                parsed[i] = value;
+            }
+
+            if (parsed[0] != 0f)
+                Logger.Warn(logSrc, $"-loddistances starts at {parsed[0]} rather than 0; LOD 0 normally uses distance 0.");
+            for (int i = 1; i < parsed.Length; i++)
+            {
+                if (parsed[i] <= parsed[i - 1])
+                {
+                    Logger.Warn(logSrc, "-loddistances should increase with each LOD; RF picks the last LOD whose distance is under the view distance.");
+                    break;
+                }
+            }
+
+            distances = parsed;
+            return true;
+        }
+
         private static void ShowHelp()
         {
             Console.WriteLine();
@@ -591,6 +639,7 @@ namespace redux
             Console.WriteLine("  -flipnormals <true|false> - Flip face normals during conversion (default false)");
             Console.WriteLine("  -geomirror <X|Y|Z> - Mirror geometry across the given global axis (RFG export only)");
             Console.WriteLine("  -simplenames <true|false> - Use simple Brush_UID names in exports (default false)");
+            Console.WriteLine("  -loddistances <list> - LOD switch distances for v3m/v3c output, e.g. 0,20,80,300 (default 0,10,100,...)");
             Console.WriteLine("  -rf2lightscale <float> - RF2 light intensity scale factor (default 1.0)");
             Console.WriteLine("  -rf2coronarange <float> - Override auto-fit range (m) for RF2 corona-derived lights");
             Console.WriteLine("  -rf2coronascale <float> - Override auto-fit intensity multiplier for RF2 corona-derived lights");

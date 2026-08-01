@@ -26,6 +26,9 @@ namespace redux.utilities
         public static float? RF2CoronaRangeOverride { get; set; } = null;
         public static float? RF2CoronaScaleOverride { get; set; } = null;
         public static bool FlipNormals { get; set; } = false;
+        // LOD switch distances (world units) written to V3M/V3C submeshes, indexed by LOD.
+        // Null (or short) falls back to the built-in progression: 0, 10, 100, 1000, ...
+        public static float[]? LodDistances { get; set; } = null;
         public static string ReplacementItemName { get; set; } = "";
         public static bool ExportAlpineCoronas { get; set; } = true;
         public enum LogLevel
