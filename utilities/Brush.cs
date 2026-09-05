@@ -46,7 +46,35 @@ namespace redux.utilities
         public List<PropPoint> PropPoints { get; set; } = new List<PropPoint>();
         public List<Vector4> JointIndices { get; set; }
         public List<Vector4> JointWeights { get; set; }
+        // V3M/V3C submesh parent name. RED writes "None" when there is none, but weapon meshes
+        // repeat the submesh's own name here.
+        public string? SubmeshParent { get; set; }
+        // Ordinal of the SUBM section this brush came from. Submesh names are truncated to 24 chars
+        // and can collide, so this identifies a submesh where the name cannot.
+        public int? SubmeshIndex { get; set; }
+        // Raw V3M/V3C LOD flags from the source LOD (0x20 static, 0x30 collision LOD, 0x03 character).
+        public uint? LodFlags { get; set; }
+        // RED's submesh pivot in model space. Vertices, prop points and planes are stored relative to
+        // it. Usually the LOD0 AABB centre, but not always (APC), so carry the authored value.
+        public Vector3? SubmeshOffset { get; set; }
+        // The LOD's own texture reference table. It is not always derivable from the material table
+        // (Fighter01 LOD2 references 'Fighter_LOD2.tga', which is absent from the material table).
+        public List<V3mLodTexture>? LodTextures { get; set; }
+        // V3M/V3C LOD switch distance for this brush when it represents one LOD level of a submesh.
+        // Null means "unknown"; exporters then fall back to configured/default distances.
+        public float? LodDistance { get; set; }
 
+    }
+
+    // Extra per-material fields carried by V3M/V3C material table entries.
+    public class V3mMaterialProps
+    {
+        public float Emissive { get; set; }
+        public float Specular { get; set; }
+        public float Glossiness { get; set; }
+        public float Reflection { get; set; }
+        public string ReflectionMap { get; set; } = "";
+        public uint Flags { get; set; } = 1;
     }
 
     public class Solid
@@ -57,6 +85,8 @@ namespace redux.utilities
         public uint Flags { get; set; }
         public int Life { get; set; }
         public int State { get; set; }
+        // Parallel to Textures when the source format supplies V3M material properties.
+        public List<V3mMaterialProps>? MaterialProps { get; set; }
     }
 
     public enum SolidFlags : uint
@@ -128,6 +158,8 @@ namespace redux.utilities
         public List<Vector2> UVs { get; set; } = new();
         public int TextureIndex { get; set; }
         public ushort FaceFlags { get; set; }
+        // V3M/V3C per-chunk render flags. 0x518C41 is the norm; lamp/light meshes use 0x110C21.
+        public uint RenderFlags { get; set; } = V3mRenderFlags.Default;
         public int LightmapResolution
         {
             get => (FaceFlags >> 8) & 0x3;
@@ -435,6 +467,19 @@ namespace redux.utilities
 
         public int[] ChunkHeaders;
         public ChunkData[] Chunks;
+    }
+
+    // One entry of a V3M/V3C LOD texture reference table.
+    public class V3mLodTexture
+    {
+        public int Slot { get; set; }
+        public string Name { get; set; } = "";
+    }
+
+    public static class V3mRenderFlags
+    {
+        public const uint Default = 0x518C41;
+        public const uint Lamp = 0x110C21;
     }
 
     public enum LodFlags : uint

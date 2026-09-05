@@ -54,6 +54,7 @@ namespace redux.parsers
             Logger.Debug(logSrc, $"Header → numSubmeshes={numSubmeshes}, numAllMaterials={numAllMaterials}, numColSpheres={numColSpheres}");
 
             var mesh = new Mesh();
+            int submeshOrdinal = 0;
 
             // Section parser
             while (reader.BaseStream.Position < reader.BaseStream.Length)
@@ -73,7 +74,7 @@ namespace redux.parsers
                 else if (secType == SECTION_SUBMESH)
                 {
                     Logger.Debug(logSrc, "Found SUBMESH section; parsing submesh → multiple LOD-Brushes");
-                    var lodBrushes = ParseSubmeshAsBrushes(reader);
+                    var lodBrushes = ParseSubmeshAsBrushes(reader, submeshOrdinal++);
                     foreach (var b in lodBrushes)
                     {
                         b.UID = mesh.Brushes.Count; // sequential UIDs for LOD level brushes
@@ -106,7 +107,7 @@ namespace redux.parsers
             return mesh;
         }
 
-        private static List<Brush> ParseSubmeshAsBrushes(BinaryReader reader)
+        private static List<Brush> ParseSubmeshAsBrushes(BinaryReader reader, int submeshIndex)
         {
             Logger.Debug(logSrc, "Entering ParseSubmeshAsBrushes(...)");
             var brushes = new List<Brush>();
@@ -145,6 +146,7 @@ namespace redux.parsers
 
             // Collect diffuse_map_name for each material
             var submeshMaterials = new List<string>(numMaterials);
+            var submeshMaterialProps = new List<V3mMaterialProps>(numMaterials);
             for (int mi = 0; mi < numMaterials; mi++)
             {
                 string diffuse = ReadFixedAscii(reader, 32).TrimEnd();
@@ -159,6 +161,15 @@ namespace redux.parsers
                     $"  Material[{mi}]: diffuse=\"{diffuse}\", emissive={emissive}, specular={specular}, glossiness={glossiness}, reflection={reflection}, reflMap=\"{reflMap}\", flags=0x{matFlags:X8}");
 
                 submeshMaterials.Add(diffuse);
+                submeshMaterialProps.Add(new V3mMaterialProps
+                {
+                    Emissive = emissive,
+                    Specular = specular,
+                    Glossiness = glossiness,
+                    Reflection = reflection,
+                    ReflectionMap = reflMap,
+                    Flags = matFlags
+                });
             }
 
             int numUnknown1 = reader.ReadInt32();
@@ -173,6 +184,17 @@ namespace redux.parsers
                 brush.Solid = new Solid();
 
                 brush.TextureName = $"{submeshName}_LOD{lodIdx}";
+                brush.LodDistance = lodIdx < lodDistances.Length ? lodDistances[lodIdx] : (float?)null;
+                brush.SubmeshParent = parentName;
+                brush.SubmeshIndex = submeshIndex;
+                brush.LodFlags = lod.Flags;
+                brush.SubmeshOffset = offset;
+                if (lod.Textures != null && lod.Textures.Length > 0)
+                {
+                    brush.LodTextures = lod.Textures
+                        .Select(t => new V3mLodTexture { Slot = t.Id, Name = t.Filename ?? string.Empty })
+                        .ToList();
+                }
                 brush.Vertices = new List<Vector3>();
                 brush.UVs = new List<Vector2>();
                 brush.Indices = new List<int>();
@@ -191,6 +213,7 @@ namespace redux.parsers
                 }
 
                 var positions = new List<Vector3>();
+                var normals = new List<Vector3>();
                 var uvs = new List<Vector2>();
                 var faces = new List<Face>();
                 var indices = new List<int>();
@@ -210,8 +233,13 @@ namespace redux.parsers
                     foreach (var pos in chunkData.Positions)
                         positions.Add(pos + offset);
 
+                    // Keep the authored per-vertex normals so exporters don't have to fall back to
+                    // flat face normals (which would split every shared vertex on re-export).
                     for (int vi = 0; vi < chunkData.Positions.Length; vi++)
-                        uvs.Add(chunkData.UVs[vi]);
+                        normals.Add(vi < chunkData.Normals.Length ? chunkData.Normals[vi] : Vector3.Zero);
+
+                    for (int vi = 0; vi < chunkData.Positions.Length; vi++)
+                        uvs.Add(vi < chunkData.UVs.Length ? chunkData.UVs[vi] : Vector2.Zero);
 
                     for (int vi = 0; vi < chunkData.Positions.Length; vi++)
                     {
@@ -269,6 +297,7 @@ namespace redux.parsers
                         var face = new Face
                         {
                             TextureIndex = textureIdx,
+                            RenderFlags = info.RenderFlags,
                             Vertices = new List<int> { i0, i1, i2 },
                             UVs = new List<Vector2>
                             {
@@ -287,14 +316,32 @@ namespace redux.parsers
                 }
 
                 brush.Vertices = positions;
+                brush.Normals = normals;
                 brush.UVs = uvs;
                 brush.Indices = indices;
                 brush.Solid.Faces = faces;
                 brush.JointIndices = jointIndices;
                 brush.JointWeights = jointWeights;
 
+                // Names are kept verbatim (extensions included: .vbm animated textures must survive).
+                // The LOD texture reference table travels separately on brush.LodTextures.
                 foreach (var matName in submeshMaterials)
                     brush.Solid.Textures.Add(matName);
+
+                if (submeshMaterialProps.Count > 0)
+                {
+                    brush.Solid.MaterialProps = submeshMaterialProps
+                        .Select(p => new V3mMaterialProps
+                        {
+                            Emissive = p.Emissive,
+                            Specular = p.Specular,
+                            Glossiness = p.Glossiness,
+                            Reflection = p.Reflection,
+                            ReflectionMap = p.ReflectionMap,
+                            Flags = p.Flags
+                        })
+                        .ToList();
+                }
 
                 brushes.Add(brush);
                 Logger.Debug(logSrc,
@@ -464,34 +511,41 @@ namespace redux.parsers
 
                 Logger.Debug(logSrc, $"      → Unpacking ChunkData[{ci}]: VecsAlloc={info.VecsAlloc}, UvsAlloc={info.UvsAlloc}, FacesAlloc={info.FacesAlloc}, SamePosOffsetAlloc={info.SamePosVertexOffsetsAlloc}, WiAlloc={info.WiAlloc}");
 
-                // positions
-                int numPos = info.VecsAlloc / 12;
+                // positions — only num_vertices entries are real; the alloc size can be padded/over-allocated,
+                // so read the valid element count but advance the stream by the full alloc.
+                int numPos = Math.Min(info.NumVertices, Math.Max(0, info.VecsAlloc / 12));
+                long blockStart = ms.Position;
                 cd.Positions = new Vector3[numPos];
                 for (int i = 0; i < numPos; i++)
                 {
                     cd.Positions[i] = new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
                 }
+                ms.Position = blockStart + info.VecsAlloc;
                 pad = (0x10L - (ms.Position % 0x10L)) % 0x10L;
                 if (pad > 0) r.ReadBytes((int)pad);
                 Logger.Debug(logSrc, $"        Read {numPos} positions, skipped {pad} bytes padding.");
 
-                // normals
+                // normals (same element count and alloc size as positions)
+                blockStart = ms.Position;
                 cd.Normals = new Vector3[numPos];
                 for (int i = 0; i < numPos; i++)
                 {
                     cd.Normals[i] = new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
                 }
+                ms.Position = blockStart + info.VecsAlloc;
                 pad = (0x10L - (ms.Position % 0x10L)) % 0x10L;
                 if (pad > 0) r.ReadBytes((int)pad);
                 Logger.Debug(logSrc, $"        Read {numPos} normals, skipped {pad} bytes padding.");
 
                 // uvs
-                int numUvs = info.UvsAlloc / 8;
+                int numUvs = Math.Min(info.NumVertices, Math.Max(0, info.UvsAlloc / 8));
+                blockStart = ms.Position;
                 cd.UVs = new Vector2[numUvs];
                 for (int i = 0; i < numUvs; i++)
                 {
                     cd.UVs[i] = new Vector2(r.ReadSingle(), r.ReadSingle());
                 }
+                ms.Position = blockStart + info.UvsAlloc;
                 pad = (0x10L - (ms.Position % 0x10L)) % 0x10L;
                 if (pad > 0) r.ReadBytes((int)pad);
                 Logger.Debug(logSrc, $"        Read {numUvs} UVs, skipped {pad} bytes padding.");
@@ -529,11 +583,14 @@ namespace redux.parsers
                     cd.Planes = Array.Empty<RFPlane>();
                 }
 
-                // same_pos_vertex_offsets
-                int numOffsets = info.SamePosVertexOffsetsAlloc / 2;
+                // same_pos_vertex_offsets — only num_vertices entries are real; the rest of the
+                // allocation is slack RED reserves to round the vertex count up to a multiple of 4.
+                int numOffsets = Math.Min(info.NumVertices, Math.Max(0, info.SamePosVertexOffsetsAlloc / 2));
+                blockStart = ms.Position;
                 cd.SamePosVertexOffsets = new short[numOffsets];
                 for (int i = 0; i < numOffsets; i++)
                     cd.SamePosVertexOffsets[i] = r.ReadInt16();
+                ms.Position = blockStart + info.SamePosVertexOffsetsAlloc;
                 pad = (0x10L - (ms.Position % 0x10L)) % 0x10L;
                 if (pad > 0) r.ReadBytes((int)pad);
                 Logger.Debug(logSrc, $"        Read {numOffsets} same_pos offsets, skipped {pad} bytes padding.");

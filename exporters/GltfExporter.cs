@@ -61,7 +61,10 @@ namespace redux.exporters
                 int vertCount = compact.PositionsRh.Count;
                 List<Vector3> positions = compact.PositionsRh;
 
-                List<Vector3> normals = ComputeVertexNormals(allIndices, positions);
+                // Keep authored normals when the source supplied them; otherwise derive smooth ones.
+                List<Vector3> normals = compact.NormalsRh.Count == positions.Count
+                    ? compact.NormalsRh
+                    : ComputeVertexNormals(allIndices, positions);
 
                 List<Vector2> uvs = compact.UVs;
                 List<Vector4> joints = compact.Joints;
@@ -105,6 +108,8 @@ namespace redux.exporters
                         group.TextureName,
                         brush.UID,
                         group.TextureSlot,
+                        group.DoubleSided,
+                        group.RenderFlags,
                         materials,
                         textures,
                         images,
@@ -120,7 +125,9 @@ namespace redux.exporters
                             ["rf_brush_uid"] = brush.UID,
                             ["rf_brush_name"] = string.IsNullOrWhiteSpace(brush.TextureName) ? $"Brush_{brush.UID}" : brush.TextureName,
                             ["rf_texture"] = group.TextureName,
-                            ["rf_texture_slot"] = group.TextureSlot
+                            ["rf_texture_slot"] = group.TextureSlot,
+                            ["rf_render_flags"] = group.RenderFlags,
+                            ["rf_double_sided"] = group.DoubleSided
                         }
                     });
                 }
@@ -140,7 +147,14 @@ namespace redux.exporters
                     BrushUid = brush.UID,
                     BrushName = string.IsNullOrWhiteSpace(brush.TextureName) ? $"Brush_{brush.UID}" : brush.TextureName,
                     LodIndex = TryExtractLodIndex(brush.TextureName),
-                    MaterialSlots = BuildMaterialSlotList(brush)
+                    MaterialSlots = BuildMaterialSlotList(brush),
+                    LodDistance = brush.LodDistance,
+                    MaterialProps = BuildMaterialPropsList(brush),
+                    SubmeshParent = brush.SubmeshParent,
+                    SubmeshIndex = brush.SubmeshIndex,
+                    LodFlags = brush.LodFlags,
+                    SubmeshOffset = brush.SubmeshOffset,
+                    LodTextures = brush.LodTextures
                 });
             }
 
@@ -249,6 +263,32 @@ namespace redux.exporters
                 };
                 if (spec.LodIndex.HasValue)
                     extras["rf_lod_index"] = spec.LodIndex.Value;
+                if (spec.LodDistance.HasValue)
+                    extras["rf_lod_distance"] = spec.LodDistance.Value;
+                if (spec.MaterialProps != null)
+                    extras["rf_material_props"] = spec.MaterialProps;
+                if (!string.IsNullOrEmpty(spec.SubmeshParent))
+                    extras["rf_submesh_parent"] = spec.SubmeshParent;
+                if (spec.SubmeshIndex.HasValue)
+                    extras["rf_submesh_index"] = spec.SubmeshIndex.Value;
+                if (spec.LodFlags.HasValue)
+                    extras["rf_lod_flags"] = spec.LodFlags.Value;
+                if (spec.SubmeshOffset.HasValue)
+                {
+                    // RF model space, not glTF space; it is metadata, not geometry.
+                    Vector3 o = spec.SubmeshOffset.Value;
+                    extras["rf_submesh_offset"] = new[] { o.X, o.Y, o.Z };
+                }
+                if (spec.LodTextures != null && spec.LodTextures.Count > 0)
+                {
+                    extras["rf_lod_textures"] = spec.LodTextures
+                        .Select(t => new Dictionary<string, object>
+                        {
+                            ["slot"] = t.Slot,
+                            ["name"] = t.Name ?? string.Empty
+                        })
+                        .ToList();
+                }
 
                 var meshNode = new Node
                 {
@@ -291,7 +331,15 @@ namespace redux.exporters
                             ["rf_type"] = "prop_point",
                             ["rf_name"] = prop.Name ?? string.Empty,
                             ["rf_parent_bone"] = prop.ParentIndex,
-                            ["rf_brush_uid"] = brush.UID
+                            ["rf_brush_uid"] = brush.UID,
+                            // Authored RF-space quaternion; stock props are not always unit length.
+                            ["rf_orientation"] = new[]
+                            {
+                                prop.Orientation.X,
+                                prop.Orientation.Y,
+                                prop.Orientation.Z,
+                                prop.Orientation.W
+                            }
                         }
                     };
 
@@ -415,7 +463,7 @@ namespace redux.exporters
 
         private static List<MaterialTriangleGroup> BuildMaterialTriangleGroups(Brush brush)
         {
-            var groupsByTextureSlot = new Dictionary<int, MaterialTriangleGroup>();
+            var groupsByKey = new Dictionary<(int Slot, bool DoubleSided, uint RenderFlags), MaterialTriangleGroup>();
             bool usedFaces = false;
             int vertexCount = brush.Vertices.Count;
 
@@ -430,14 +478,18 @@ namespace redux.exporters
                     if (textureSlot < 0)
                         textureSlot = 0;
 
-                    if (!groupsByTextureSlot.TryGetValue(textureSlot, out var group))
+                    bool doubleSided = (face.FaceFlags & 0x20) != 0;
+                    var key = (textureSlot, doubleSided, face.RenderFlags);
+                    if (!groupsByKey.TryGetValue(key, out var group))
                     {
                         group = new MaterialTriangleGroup
                         {
                             TextureSlot = textureSlot,
-                            TextureName = ResolveBrushTextureName(brush, textureSlot)
+                            TextureName = ResolveBrushTextureName(brush, textureSlot),
+                            DoubleSided = doubleSided,
+                            RenderFlags = face.RenderFlags
                         };
-                        groupsByTextureSlot[textureSlot] = group;
+                        groupsByKey[key] = group;
                     }
 
                     for (int i = 1; i < face.Vertices.Count - 1; i++)
@@ -465,7 +517,7 @@ namespace redux.exporters
                 if (fallbackIndices.Count >= 3)
                 {
                     int textureSlot = 0;
-                    groupsByTextureSlot[textureSlot] = new MaterialTriangleGroup
+                    groupsByKey[(textureSlot, false, V3mRenderFlags.Default)] = new MaterialTriangleGroup
                     {
                         TextureSlot = textureSlot,
                         TextureName = ResolveBrushTextureName(brush, textureSlot),
@@ -474,9 +526,11 @@ namespace redux.exporters
                 }
             }
 
-            return groupsByTextureSlot.Values
+            return groupsByKey.Values
                 .Where(g => g.Indices.Count >= 3)
                 .OrderBy(g => g.TextureSlot)
+                .ThenBy(g => g.DoubleSided ? 1 : 0)
+                .ThenBy(g => g.RenderFlags)
                 .ToList();
         }
 
@@ -502,12 +556,18 @@ namespace redux.exporters
         private static CompactedBrushGeometry CompactBrushGeometry(Brush brush, List<MaterialTriangleGroup> groups, bool hasBones)
         {
             var positionsRh = new List<Vector3>();
+            var normalsRh = new List<Vector3>();
             var uvs = new List<Vector2>();
             var joints = new List<Vector4>();
             var weights = new List<Vector4>();
             var keyToIndex = new Dictionary<VertexWeldKey, int>();
 
             int sourceVertexCount = brush.Vertices.Count;
+            // Authored per-vertex normals (V3M/V3C, or a glTF re-import) must survive the trip:
+            // welding across differing normals would smooth away hard edges.
+            bool hasAuthoredNormals = brush.Normals != null
+                && brush.Normals.Count >= sourceVertexCount
+                && brush.Normals.Take(sourceVertexCount).Any(n => n.LengthSquared() > 1e-8f);
             foreach (var group in groups)
             {
                 for (int i = 0; i < group.Indices.Count; i++)
@@ -528,12 +588,17 @@ namespace redux.exporters
                         ? NormalizeWeights(brush.JointWeights[sourceIndex])
                         : new Vector4(1f, 0f, 0f, 0f);
 
-                    VertexWeldKey key = BuildVertexWeldKey(srcPos, srcUv, srcJoints, srcWeights);
+                    // Some stock meshes store NaN normals; they must not reach the buffer, and they
+                    // have to compare equal to each other so welding still merges those vertices.
+                    Vector3 srcNormal = hasAuthoredNormals ? SanitizeNormal(brush.Normals[sourceIndex]) : Vector3.Zero;
+
+                    VertexWeldKey key = BuildVertexWeldKey(srcPos, srcNormal, srcUv, srcJoints, srcWeights);
                     if (!keyToIndex.TryGetValue(key, out int compactIndex))
                     {
                         compactIndex = positionsRh.Count;
                         keyToIndex[key] = compactIndex;
                         positionsRh.Add(RfToRh(srcPos));
+                        normalsRh.Add(RfToRh(srcNormal));
                         uvs.Add(srcUv);
                         if (hasBones)
                         {
@@ -553,10 +618,20 @@ namespace redux.exporters
             return new CompactedBrushGeometry
             {
                 PositionsRh = positionsRh,
+                NormalsRh = hasAuthoredNormals ? normalsRh : new List<Vector3>(),
                 UVs = uvs,
                 Joints = joints,
                 Weights = weights
             };
+        }
+
+        // Non-finite normals collapse to zero: NaN never compares equal to itself, so leaving it in
+        // place would split every vertex that carries one.
+        private static Vector3 SanitizeNormal(Vector3 n)
+        {
+            if (float.IsFinite(n.X) && float.IsFinite(n.Y) && float.IsFinite(n.Z))
+                return n;
+            return Vector3.Zero;
         }
 
         private static string ResolveBrushTextureName(Brush brush, int textureSlot)
@@ -628,12 +703,38 @@ namespace redux.exporters
             return slots;
         }
 
-        private static VertexWeldKey BuildVertexWeldKey(Vector3 pos, Vector2 uv, Vector4 joints, Vector4 weights)
+        // Serialized parallel to rf_material_slots so V3M material table extras survive a glTF round trip.
+        private static List<Dictionary<string, object>>? BuildMaterialPropsList(Brush brush)
+        {
+            List<V3mMaterialProps>? props = brush.Solid?.MaterialProps;
+            if (props == null || props.Count == 0)
+                return null;
+
+            var result = new List<Dictionary<string, object>>(props.Count);
+            foreach (V3mMaterialProps p in props)
+            {
+                result.Add(new Dictionary<string, object>
+                {
+                    ["emissive"] = p.Emissive,
+                    ["specular"] = p.Specular,
+                    ["glossiness"] = p.Glossiness,
+                    ["reflection"] = p.Reflection,
+                    ["refl_map"] = p.ReflectionMap ?? string.Empty,
+                    ["flags"] = p.Flags
+                });
+            }
+            return result;
+        }
+
+        private static VertexWeldKey BuildVertexWeldKey(Vector3 pos, Vector3 normal, Vector2 uv, Vector4 joints, Vector4 weights)
         {
             return new VertexWeldKey(
                 Quantize(pos.X, 100000f),
                 Quantize(pos.Y, 100000f),
                 Quantize(pos.Z, 100000f),
+                Quantize(normal.X, 100000f),
+                Quantize(normal.Y, 100000f),
+                Quantize(normal.Z, 100000f),
                 Quantize(uv.X, 1000000f),
                 Quantize(uv.Y, 1000000f),
                 Quantize(joints.X, 1f),
@@ -657,6 +758,8 @@ namespace redux.exporters
             string rfTextureName,
             int brushUid,
             int textureSlot,
+            bool doubleSided,
+            uint renderFlags,
             List<Material> materials,
             List<TextureDef> textures,
             List<ImageDef> images,
@@ -682,7 +785,7 @@ namespace redux.exporters
                 // Keep material name aligned with texture filename so Blender roundtrip still resolves
                 // the original RF bitmap even if custom extras are stripped.
                 name = normalizedTexture,
-                doubleSided = true,
+                doubleSided = doubleSided,
                 pbrMetallicRoughness = new PbrMetallicRoughness
                 {
                     baseColorFactor = [1f, 1f, 1f, 1f],
@@ -694,7 +797,8 @@ namespace redux.exporters
                 {
                     ["rf_texture"] = normalizedTexture,
                     ["rf_brush_uid"] = brushUid,
-                    ["rf_texture_slot"] = textureSlot
+                    ["rf_texture_slot"] = textureSlot,
+                    ["rf_render_flags"] = renderFlags
                 }
             });
 
@@ -1410,12 +1514,17 @@ namespace redux.exporters
         {
             public int TextureSlot { get; set; }
             public string TextureName { get; set; } = "default.tga";
+            // V3M face flag 0x20 = two-sided. Stock triangle flags are only ever 0 or 0x20, so a
+            // brush's faces split into at most two primitives per slot.
+            public bool DoubleSided { get; set; }
+            public uint RenderFlags { get; set; } = V3mRenderFlags.Default;
             public List<int> Indices { get; set; } = new();
         }
 
         private class CompactedBrushGeometry
         {
             public List<Vector3> PositionsRh { get; set; } = new();
+            public List<Vector3> NormalsRh { get; set; } = new();
             public List<Vector2> UVs { get; set; } = new();
             public List<Vector4> Joints { get; set; } = new();
             public List<Vector4> Weights { get; set; } = new();
@@ -1428,12 +1537,22 @@ namespace redux.exporters
             public string BrushName { get; set; } = string.Empty;
             public int? LodIndex { get; set; }
             public List<string> MaterialSlots { get; set; } = new();
+            public float? LodDistance { get; set; }
+            public List<Dictionary<string, object>>? MaterialProps { get; set; }
+            public string? SubmeshParent { get; set; }
+            public int? SubmeshIndex { get; set; }
+            public uint? LodFlags { get; set; }
+            public Vector3? SubmeshOffset { get; set; }
+            public List<V3mLodTexture>? LodTextures { get; set; }
         }
 
         private readonly record struct VertexWeldKey(
             long Px,
             long Py,
             long Pz,
+            long Nx,
+            long Ny,
+            long Nz,
             long U,
             long V,
             long J0,

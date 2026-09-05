@@ -197,6 +197,33 @@ namespace redux.parsers
                         if (slotList.Count > 0)
                             brush.Solid.Textures.AddRange(slotList);
 
+                        if (TryGetExtraFloat(meshNode.extras, "rf_lod_distance", out float lodDistance))
+                            brush.LodDistance = lodDistance;
+                        else if (TryGetExtraFloat(prim.extras, "rf_lod_distance", out float primLodDistance))
+                            brush.LodDistance = primLodDistance;
+
+                        if (TryGetExtraString(meshNode.extras, "rf_submesh_parent", out string submeshParent))
+                            brush.SubmeshParent = submeshParent;
+                        if (TryGetExtraInt(meshNode.extras, "rf_submesh_index", out int submeshIndex) && submeshIndex >= 0)
+                            brush.SubmeshIndex = submeshIndex;
+                        else if (TryGetExtraInt(prim.extras, "rf_submesh_index", out int primSubmeshIndex) && primSubmeshIndex >= 0)
+                            brush.SubmeshIndex = primSubmeshIndex;
+                        if (TryGetExtraUInt(meshNode.extras, "rf_lod_flags", out uint lodFlags))
+                            brush.LodFlags = lodFlags;
+                        if (TryReadVector3Extra(meshNode.extras, "rf_submesh_offset", out Vector3 submeshOffset))
+                            brush.SubmeshOffset = submeshOffset;
+                        brush.LodTextures = ReadLodTexturesFromExtras(meshNode.extras);
+
+                        List<V3mMaterialProps>? matProps = ReadMaterialPropsFromExtras(meshNode.extras)
+                            ?? ReadMaterialPropsFromExtras(prim.extras);
+                        if (matProps != null)
+                        {
+                            // Keep the props table parallel to the material slot table.
+                            while (matProps.Count < slotList.Count)
+                                matProps.Add(new V3mMaterialProps());
+                            brush.Solid.MaterialProps = matProps;
+                        }
+
                         if (hasSkin)
                         {
                             brush.JointIndices = new List<Vector4>();
@@ -300,8 +327,13 @@ namespace redux.parsers
                     if (string.IsNullOrWhiteSpace(brush.TextureName))
                         brush.TextureName = Path.GetFileNameWithoutExtension(rfTexture);
 
-                    // V3M face bit 0x20 = two-sided (disables backface culling). Maps from glTF material.doubleSided.
-                    ushort faceFlags = IsMaterialDoubleSided(root, prim.material) ? (ushort)0x20 : (ushort)0;
+                    // V3M face bit 0x20 = two-sided (disables backface culling). Maps from glTF material.doubleSided;
+                    // the exporter emits one material per (slot, two-sided, render flags) variant.
+                    bool primDoubleSided = IsMaterialDoubleSided(root, prim.material);
+                    if (TryGetExtraBool(prim.extras, "rf_double_sided", out bool explicitDoubleSided))
+                        primDoubleSided = explicitDoubleSided;
+                    ushort faceFlags = primDoubleSided ? (ushort)0x20 : (ushort)0;
+                    uint renderFlags = ResolveRenderFlags(root, prim);
 
                     for (int i = 0; i + 2 < localIndices.Count; i += 3)
                     {
@@ -322,6 +354,7 @@ namespace redux.parsers
                         brush.Solid.Faces.Add(new Face
                         {
                             TextureIndex = textureSlot,
+                            RenderFlags = renderFlags,
                             Vertices = new List<int> { g0, g1, g2 },
                             UVs = new List<Vector2> { brush.UVs[g0], brush.UVs[g1], brush.UVs[g2] },
                             FaceFlags = faceFlags
@@ -357,19 +390,40 @@ namespace redux.parsers
                 string name = GetPropPointName(node);
                 int parentBone = ResolveParentBoneIndex(i, parentByNode, nodeToBone, node);
 
-                Matrix4x4 propLocalMatrix = ResolveNodeLocalMatrixForParentBone(
-                    i,
-                    parentBone,
-                    node,
-                    boneNodeIndices,
-                    nodeWorldMatrices);
-                if (!Matrix4x4.Decompose(propLocalMatrix, out Vector3 _, out Quaternion rotRh, out Vector3 posRh) || rotRh.LengthSquared() < 1e-8f)
-                    rotRh = Quaternion.Identity;
+                Quaternion rotRh;
+                Vector3 posRh;
+                if (TryGetDirectNodeTrs(i, parentBone, node, boneNodeIndices, parentByNode, out rotRh, out posRh, out _))
+                {
+                    // Scene-root TRS node: read rotation/translation verbatim. Matrix4x4.Decompose would
+                    // canonicalize the quaternion sign and add float noise, flipping prop orientations.
+                }
                 else
-                    rotRh = Quaternion.Normalize(rotRh);
+                {
+                    Matrix4x4 propLocalMatrix = ResolveNodeLocalMatrixForParentBone(
+                        i,
+                        parentBone,
+                        node,
+                        boneNodeIndices,
+                        nodeWorldMatrices);
+                    if (!Matrix4x4.Decompose(propLocalMatrix, out Vector3 _, out rotRh, out posRh) || rotRh.LengthSquared() < 1e-8f)
+                        rotRh = Quaternion.Identity;
+                    else
+                        rotRh = Quaternion.Normalize(rotRh);
+                }
 
                 Quaternion rotRf = Quaternion.Normalize(new Quaternion(-rotRh.X, rotRh.Y, rotRh.Z, rotRh.W));
                 Vector3 posRf = new Vector3(-posRh.X, posRh.Y, posRh.Z);
+
+                // Some stock prop quaternions are not unit length (grab.v3c, weapon_remote_*). glTF
+                // node rotations must be normalised, so the authored value rides along in extras and
+                // is restored only while the node still points the same way.
+                if (TryReadQuaternionExtra(node.extras, "rf_orientation", out Quaternion authored) &&
+                    authored.LengthSquared() > 1e-12f)
+                {
+                    Quaternion authoredDir = Quaternion.Normalize(authored);
+                    if (MathF.Abs(Quaternion.Dot(authoredDir, rotRf)) >= 0.9999f)
+                        rotRf = authored;
+                }
 
                 var importedProp = new PropPoint
                 {
@@ -380,6 +434,7 @@ namespace redux.parsers
                 };
 
                 var targets = new List<Brush>();
+                bool broadcastToAllBrushes = false;
                 if (TryGetExtraInt(node, "rf_brush_uid", out int brushUid) && brushByUid.TryGetValue(brushUid, out Brush byExtras))
                 {
                     targets.Add(byExtras);
@@ -395,14 +450,31 @@ namespace redux.parsers
                 else
                 {
                     // Blender may drop custom extras; use a broad fallback so props survive roundtrip.
+                    broadcastToAllBrushes = true;
                     targets.AddRange(mesh.Brushes);
                     Logger.Warn(logSrc, $"Prop point '{name}' missing owner metadata; attaching to all brushes.");
                 }
 
                 foreach (Brush targetBrush in targets)
                 {
-                    if (AddPropPointDeduplicated(targetBrush, importedProp))
+                    // Stock meshes really do repeat prop points (fp_aslt_rfl_armA has link-BDBN-root
+                    // twice), so only de-duplicate when the prop was broadcast to every brush.
+                    if (broadcastToAllBrushes)
+                    {
+                        if (AddPropPointDeduplicated(targetBrush, importedProp))
+                            importedPropPoints++;
+                    }
+                    else
+                    {
+                        targetBrush.PropPoints.Add(new PropPoint
+                        {
+                            Name = importedProp.Name,
+                            Orientation = importedProp.Orientation,
+                            Position = importedProp.Position,
+                            ParentIndex = importedProp.ParentIndex
+                        });
                         importedPropPoints++;
+                    }
                 }
             }
 
@@ -414,23 +486,30 @@ namespace redux.parsers
 
                 string name = GetCollisionSphereName(node);
                 int parentBone = ResolveParentBoneIndex(i, parentByNode, nodeToBone, node);
-                Matrix4x4 sphereLocalMatrix = ResolveNodeLocalMatrixForParentBone(
-                    i,
-                    parentBone,
-                    node,
-                    boneNodeIndices,
-                    nodeWorldMatrices);
                 Vector3 scaleRh;
                 Quaternion sphereRotRh;
                 Vector3 posRh;
-                if (!Matrix4x4.Decompose(sphereLocalMatrix, out scaleRh, out sphereRotRh, out posRh))
+                if (TryGetDirectNodeTrs(i, parentBone, node, boneNodeIndices, parentByNode, out sphereRotRh, out posRh, out scaleRh))
                 {
-                    scaleRh = node.scale != null && node.scale.Length >= 3
-                        ? new Vector3(node.scale[0], node.scale[1], node.scale[2])
-                        : Vector3.One;
-                    posRh = node.translation != null && node.translation.Length >= 3
-                        ? new Vector3(node.translation[0], node.translation[1], node.translation[2])
-                        : Vector3.Zero;
+                    // Scene-root TRS node: use its own translation/scale directly.
+                }
+                else
+                {
+                    Matrix4x4 sphereLocalMatrix = ResolveNodeLocalMatrixForParentBone(
+                        i,
+                        parentBone,
+                        node,
+                        boneNodeIndices,
+                        nodeWorldMatrices);
+                    if (!Matrix4x4.Decompose(sphereLocalMatrix, out scaleRh, out sphereRotRh, out posRh))
+                    {
+                        scaleRh = node.scale != null && node.scale.Length >= 3
+                            ? new Vector3(node.scale[0], node.scale[1], node.scale[2])
+                            : Vector3.One;
+                        posRh = node.translation != null && node.translation.Length >= 3
+                            ? new Vector3(node.translation[0], node.translation[1], node.translation[2])
+                            : Vector3.Zero;
+                    }
                 }
 
                 float radius;
@@ -1082,6 +1161,103 @@ namespace redux.parsers
             return result;
         }
 
+        private static bool TryReadQuaternionExtra(JsonElement? extras, string key, out Quaternion value)
+        {
+            value = Quaternion.Identity;
+            if (!extras.HasValue || extras.Value.ValueKind != JsonValueKind.Object)
+                return false;
+            if (!extras.Value.TryGetProperty(key, out JsonElement arr) || arr.ValueKind != JsonValueKind.Array)
+                return false;
+            var parts = new List<float>(4);
+            foreach (JsonElement item in arr.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Number || !item.TryGetSingle(out float f))
+                    return false;
+                parts.Add(f);
+            }
+            if (parts.Count < 4)
+                return false;
+            value = new Quaternion(parts[0], parts[1], parts[2], parts[3]);
+            return true;
+        }
+
+        private static bool TryReadVector3Extra(JsonElement? extras, string key, out Vector3 value)
+        {
+            value = Vector3.Zero;
+            if (!extras.HasValue || extras.Value.ValueKind != JsonValueKind.Object)
+                return false;
+            if (!extras.Value.TryGetProperty(key, out JsonElement arr) || arr.ValueKind != JsonValueKind.Array)
+                return false;
+            var parts = new List<float>(3);
+            foreach (JsonElement item in arr.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Number || !item.TryGetSingle(out float f))
+                    return false;
+                parts.Add(f);
+            }
+            if (parts.Count < 3)
+                return false;
+            value = new Vector3(parts[0], parts[1], parts[2]);
+            return true;
+        }
+
+        private static List<V3mLodTexture>? ReadLodTexturesFromExtras(JsonElement? extras)
+        {
+            if (!extras.HasValue || extras.Value.ValueKind != JsonValueKind.Object)
+                return null;
+            if (!extras.Value.TryGetProperty("rf_lod_textures", out JsonElement arr) || arr.ValueKind != JsonValueKind.Array)
+                return null;
+
+            var result = new List<V3mLodTexture>();
+            foreach (JsonElement item in arr.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object)
+                    continue;
+                int slot = item.TryGetProperty("slot", out JsonElement s) && s.ValueKind == JsonValueKind.Number && s.TryGetInt32(out int si) ? si : 0;
+                string name = item.TryGetProperty("name", out JsonElement n) && n.ValueKind == JsonValueKind.String ? (n.GetString() ?? string.Empty) : string.Empty;
+                if (string.IsNullOrWhiteSpace(name))
+                    continue;
+                result.Add(new V3mLodTexture { Slot = slot, Name = name });
+            }
+            return result.Count > 0 ? result : null;
+        }
+
+        private static List<V3mMaterialProps>? ReadMaterialPropsFromExtras(JsonElement? extras)
+        {
+            if (!extras.HasValue || extras.Value.ValueKind != JsonValueKind.Object)
+                return null;
+            if (!extras.Value.TryGetProperty("rf_material_props", out JsonElement arr) || arr.ValueKind != JsonValueKind.Array)
+                return null;
+
+            var result = new List<V3mMaterialProps>();
+            foreach (JsonElement item in arr.EnumerateArray())
+            {
+                var props = new V3mMaterialProps();
+                if (item.ValueKind == JsonValueKind.Object)
+                {
+                    props.Emissive = ReadJsonFloat(item, "emissive", 0f);
+                    props.Specular = ReadJsonFloat(item, "specular", 0f);
+                    props.Glossiness = ReadJsonFloat(item, "glossiness", 0f);
+                    props.Reflection = ReadJsonFloat(item, "reflection", 0f);
+                    props.ReflectionMap = item.TryGetProperty("refl_map", out JsonElement rm) && rm.ValueKind == JsonValueKind.String
+                        ? (rm.GetString() ?? string.Empty)
+                        : string.Empty;
+                    props.Flags = item.TryGetProperty("flags", out JsonElement fl) && fl.ValueKind == JsonValueKind.Number && fl.TryGetUInt32(out uint flagValue)
+                        ? flagValue
+                        : 1u;
+                }
+                result.Add(props);
+            }
+            return result;
+        }
+
+        private static float ReadJsonFloat(JsonElement obj, string name, float fallback)
+        {
+            if (obj.TryGetProperty(name, out JsonElement e) && e.ValueKind == JsonValueKind.Number && e.TryGetSingle(out float v))
+                return v;
+            return fallback;
+        }
+
         private static string ResolveRfTextureName(GltfRoot root, int? materialIndex)
         {
             if (!materialIndex.HasValue || root.materials == null)
@@ -1121,6 +1297,43 @@ namespace redux.parsers
             }
 
             return $"material_{mi}.tga";
+        }
+
+        private static uint ResolveRenderFlags(GltfRoot root, Primitive prim)
+        {
+            if (TryGetExtraUInt(prim.extras, "rf_render_flags", out uint fromPrim) && fromPrim != 0)
+                return fromPrim;
+            if (prim.material.HasValue && root.materials != null)
+            {
+                int mi = prim.material.Value;
+                if (mi >= 0 && mi < root.materials.Count &&
+                    TryGetExtraUInt(root.materials[mi].extras, "rf_render_flags", out uint fromMat) && fromMat != 0)
+                    return fromMat;
+            }
+            return V3mRenderFlags.Default;
+        }
+
+        private static bool TryGetExtraUInt(JsonElement? extras, string key, out uint value)
+        {
+            value = 0;
+            if (!extras.HasValue || extras.Value.ValueKind != JsonValueKind.Object)
+                return false;
+            if (!extras.Value.TryGetProperty(key, out JsonElement e) || e.ValueKind != JsonValueKind.Number)
+                return false;
+            return e.TryGetUInt32(out value);
+        }
+
+        private static bool TryGetExtraBool(JsonElement? extras, string key, out bool value)
+        {
+            value = false;
+            if (!extras.HasValue || extras.Value.ValueKind != JsonValueKind.Object)
+                return false;
+            if (!extras.Value.TryGetProperty(key, out JsonElement e))
+                return false;
+            if (e.ValueKind == JsonValueKind.True) { value = true; return true; }
+            if (e.ValueKind == JsonValueKind.False) { value = false; return true; }
+            if (e.ValueKind == JsonValueKind.Number && e.TryGetInt32(out int n)) { value = n != 0; return true; }
+            return false;
         }
 
         private static bool IsMaterialDoubleSided(GltfRoot root, int? materialIndex)
@@ -1207,11 +1420,10 @@ namespace redux.parsers
             if (string.IsNullOrWhiteSpace(file))
                 file = "default";
 
-            string ext = Path.GetExtension(file);
-            if (string.IsNullOrWhiteSpace(ext))
+            // Keep whatever extension the source carried (.vbm animated textures must survive);
+            // only supply .tga when there is none at all.
+            if (string.IsNullOrWhiteSpace(Path.GetExtension(file)))
                 file += ".tga";
-            else if (!ext.Equals(".tga", StringComparison.OrdinalIgnoreCase))
-                file = Path.GetFileNameWithoutExtension(file) + ".tga";
 
             return file;
         }
@@ -1318,6 +1530,43 @@ namespace redux.parsers
             }
 
             return false;
+        }
+
+        // Scene-root nodes that carry plain TRS need no matrix round trip: Matrix4x4.Decompose
+        // canonicalizes the quaternion sign (negating props such as (0,-1,0,0)) and introduces
+        // float noise, so read the authored values back verbatim instead.
+        private static bool TryGetDirectNodeTrs(
+            int nodeIndex,
+            int parentBone,
+            Node node,
+            int[] boneNodeIndices,
+            Dictionary<int, int> parentByNode,
+            out Quaternion rotRh,
+            out Vector3 posRh,
+            out Vector3 scaleRh)
+        {
+            rotRh = Quaternion.Identity;
+            posRh = Vector3.Zero;
+            scaleRh = Vector3.One;
+
+            if (parentByNode.ContainsKey(nodeIndex))
+                return false;
+            if (node.matrix != null && node.matrix.Length == 16)
+                return false;
+            // A node relativized against a bone still needs the full matrix path.
+            if (parentBone >= 0 && parentBone < boneNodeIndices.Length && boneNodeIndices[parentBone] >= 0)
+                return false;
+
+            if (node.rotation != null && node.rotation.Length >= 4)
+            {
+                var q = new Quaternion(node.rotation[0], node.rotation[1], node.rotation[2], node.rotation[3]);
+                rotRh = q.LengthSquared() < 1e-8f ? Quaternion.Identity : q;
+            }
+            if (node.translation != null && node.translation.Length >= 3)
+                posRh = new Vector3(node.translation[0], node.translation[1], node.translation[2]);
+            if (node.scale != null && node.scale.Length >= 3)
+                scaleRh = new Vector3(node.scale[0], node.scale[1], node.scale[2]);
+            return true;
         }
 
         private static Matrix4x4 ResolveNodeLocalMatrixForParentBone(
