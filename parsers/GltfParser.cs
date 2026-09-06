@@ -14,6 +14,13 @@ namespace redux.parsers
         public RfaFile? Animation { get; init; }
     }
 
+    // Thrown when a glTF file parses but carries nothing convertible. The message has already been
+    // logged, so callers should exit quietly rather than surface a stack trace.
+    public sealed class GltfContentException : Exception
+    {
+        public GltfContentException(string message) : base(message) { }
+    }
+
     public static class GltfParser
     {
         private const string logSrc = "GltfParser";
@@ -22,10 +29,33 @@ namespace redux.parsers
         {
             string json = File.ReadAllText(path);
             var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            GltfRoot root = JsonSerializer.Deserialize<GltfRoot>(json, opts) ?? throw new InvalidDataException("Invalid glTF JSON.");
+            GltfRoot? root;
+            try
+            {
+                root = JsonSerializer.Deserialize<GltfRoot>(json, opts);
+            }
+            catch (JsonException ex)
+            {
+                Logger.Error(logSrc, $"Could not parse glTF JSON in \"{path}\": {ex.Message}");
+                throw new GltfContentException("Malformed glTF JSON.");
+            }
 
-            if (root.buffers.Count == 0)
-                throw new InvalidDataException("glTF has no buffers.");
+            if (root == null)
+            {
+                Logger.Error(logSrc, $"Could not parse glTF JSON in \"{path}\".");
+                throw new GltfContentException("Invalid glTF JSON.");
+            }
+
+            // A glTF exported with Blender's "Limit to Selected Objects" while only an empty (a prop
+            // point or collision sphere helper) was selected has nodes but no geometry at all.
+            if (root.meshes.Count == 0 || root.buffers.Count == 0)
+            {
+                Logger.Error(
+                    logSrc,
+                    $"glTF contains no mesh data (nodes={root.nodes.Count}, meshes={root.meshes.Count}). " +
+                    "If this was exported from Blender, disable 'Limit to Selected Objects' or select the whole model before exporting.");
+                throw new GltfContentException("glTF contains no mesh data.");
+            }
 
             string baseDir = Path.GetDirectoryName(path) ?? string.Empty;
             byte[] buffer = LoadBuffer(root.buffers[0].uri, baseDir);
@@ -380,7 +410,10 @@ namespace redux.parsers
                     brushByUid[brush.UID] = brush;
             }
 
+            // Count the prop nodes actually read, not the attachments: a model-level prop is copied
+            // into every LOD brush, and reporting that product looks like duplication.
             int importedPropPoints = 0;
+            int broadcastPropBrushes = 0;
             for (int i = 0; i < root.nodes.Count; i++)
             {
                 Node node = root.nodes[i];
@@ -433,8 +466,10 @@ namespace redux.parsers
                     ParentIndex = parentBone
                 };
 
+                // Prop points are model-level: every LOD brush of every submesh gets the whole set,
+                // which is what RED writes. Older glTF files tagged each prop with the brush it came
+                // from, so those keep the per-brush behaviour.
                 var targets = new List<Brush>();
-                bool broadcastToAllBrushes = false;
                 if (TryGetExtraInt(node, "rf_brush_uid", out int brushUid) && brushByUid.TryGetValue(brushUid, out Brush byExtras))
                 {
                     targets.Add(byExtras);
@@ -449,33 +484,27 @@ namespace redux.parsers
                 }
                 else
                 {
-                    // Blender may drop custom extras; use a broad fallback so props survive roundtrip.
-                    broadcastToAllBrushes = true;
                     targets.AddRange(mesh.Brushes);
-                    Logger.Warn(logSrc, $"Prop point '{name}' missing owner metadata; attaching to all brushes.");
                 }
 
                 foreach (Brush targetBrush in targets)
                 {
-                    // Stock meshes really do repeat prop points (fp_aslt_rfl_armA has link-BDBN-root
-                    // twice), so only de-duplicate when the prop was broadcast to every brush.
-                    if (broadcastToAllBrushes)
+                    // One prop node contributes one prop to each target brush. Value de-duplication is
+                    // deliberately not applied: stock meshes really do repeat a prop (fp_aslt_rfl_armA
+                    // stores link-BDBN-root twice), and the exporter already emits each prop once, so
+                    // a round trip cannot double them.
+                    targetBrush.PropPoints.Add(new PropPoint
                     {
-                        if (AddPropPointDeduplicated(targetBrush, importedProp))
-                            importedPropPoints++;
-                    }
-                    else
-                    {
-                        targetBrush.PropPoints.Add(new PropPoint
-                        {
-                            Name = importedProp.Name,
-                            Orientation = importedProp.Orientation,
-                            Position = importedProp.Position,
-                            ParentIndex = importedProp.ParentIndex
-                        });
-                        importedPropPoints++;
-                    }
+                        Name = importedProp.Name,
+                        Orientation = importedProp.Orientation,
+                        Position = importedProp.Position,
+                        ParentIndex = importedProp.ParentIndex
+                    });
                 }
+
+                importedPropPoints++;
+                if (targets.Count > 1)
+                    broadcastPropBrushes = Math.Max(broadcastPropBrushes, targets.Count);
             }
 
             for (int i = 0; i < root.nodes.Count; i++)
@@ -532,7 +561,10 @@ namespace redux.parsers
 
             RfaFile? anim = BuildAnimation(root, buffer, jointNodes, nodeToBone);
 
-            Logger.Info(logSrc, $"Read glTF: brushes={mesh.Brushes.Count}, bones={mesh.Bones.Count}, props={importedPropPoints}, cspheres={mesh.CollisionSpheres.Count}, hasAnim={anim != null}");
+            string propSummary = broadcastPropBrushes > 1
+                ? $"{importedPropPoints} (broadcast to {broadcastPropBrushes} brushes)"
+                : importedPropPoints.ToString();
+            Logger.Info(logSrc, $"Read glTF: brushes={mesh.Brushes.Count}, bones={mesh.Bones.Count}, props={propSummary}, cspheres={mesh.CollisionSpheres.Count}, hasAnim={anim != null}");
             return new GltfImportResult { Mesh = mesh, Animation = anim };
         }
 
@@ -1441,7 +1473,13 @@ namespace redux.parsers
                 return Convert.FromBase64String(uri[(comma + 1)..]);
             }
 
-            return File.ReadAllBytes(Path.Combine(baseDir, uri));
+            string bufferPath = Path.Combine(baseDir, uri);
+            if (!File.Exists(bufferPath))
+            {
+                Logger.Error(logSrc, $"glTF buffer file not found: \"{bufferPath}\". A .gltf needs its .bin companion alongside it.");
+                throw new GltfContentException("Missing glTF buffer file.");
+            }
+            return File.ReadAllBytes(bufferPath);
         }
 
         private static Dictionary<int, int> BuildParentMap(List<Node> nodes)
@@ -2275,11 +2313,13 @@ namespace redux.parsers
 
         private class GltfRoot
         {
-            public required List<BufferDef> buffers { get; set; }
-            public required List<BufferView> bufferViews { get; set; }
-            public required List<Accessor> accessors { get; set; }
-            public required List<GltfMesh> meshes { get; set; }
-            public required List<Node> nodes { get; set; }
+            // Optional with empty defaults: a glTF that omits them is valid JSON and must reach the
+            // content check in ReadGltf rather than blowing up inside the deserializer.
+            public List<BufferDef> buffers { get; set; } = new();
+            public List<BufferView> bufferViews { get; set; } = new();
+            public List<Accessor> accessors { get; set; } = new();
+            public List<GltfMesh> meshes { get; set; } = new();
+            public List<Node> nodes { get; set; } = new();
             public List<Skin>? skins { get; set; }
             public List<Animation>? animations { get; set; }
             public List<Material>? materials { get; set; }

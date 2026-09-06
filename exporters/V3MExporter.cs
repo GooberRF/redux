@@ -149,7 +149,8 @@ namespace redux.exporters
             Vector3 bboxMin = writeCharacterMesh ? localMin : -absExtent;
             Vector3 bboxMax = writeCharacterMesh ? localMax : absExtent;
 
-            // Rebase geometry into submesh-local space (a no-op when offset is zero).
+            // Rebase vertices and planes into submesh-local space (a no-op when offset is zero).
+            // Prop points are NOT rebased: RF reads them straight from the file in model space.
             float radius = 0f;
             for (int li = 0; li < lodMaterialChunks.Count; li++)
             {
@@ -182,7 +183,7 @@ namespace redux.exporters
 
             List<LodTextureRef> textureTable = BuildLodTextureTable(group, writeCharacterMesh);
             for (int i = 0; i < numLods; i++)
-                WriteLod(group.Lods[i], lodMaterialChunks[i], writer, writeCharacterMesh, offset,
+                WriteLod(group.Lods[i], lodMaterialChunks[i], writer, writeCharacterMesh,
                          BuildLodTextureRefs(group.Lods[i], group, lodMaterialChunks[i], textureTable, writeCharacterMesh));
 
             writer.Write(group.Materials.Count);
@@ -203,7 +204,7 @@ namespace redux.exporters
             writer.Write(0f);
         }
 
-        private static void WriteLod(Brush brush, List<MaterialChunk> materialChunks, BinaryWriter writer, bool writeCharacterMesh, Vector3 offset, List<LodTextureRef> textureRefs)
+        private static void WriteLod(Brush brush, List<MaterialChunk> materialChunks, BinaryWriter writer, bool writeCharacterMesh, List<LodTextureRef> textureRefs)
         {
             // Stock character LODs are always 0x03 (CHARACTER | ORIG_MAP) with no plane block; static
             // LODs are 0x20, plus 0x10 when the source marked the LOD as the collision LOD.
@@ -383,11 +384,10 @@ namespace redux.exporters
                     dw.Write(q.Y);
                     dw.Write(q.Z);
                     dw.Write(q.W);
-                    // Prop point positions live in the same submesh-local space as the vertices.
-                    Vector3 local = pp.Position - offset;
-                    dw.Write(local.X);
-                    dw.Write(local.Y);
-                    dw.Write(local.Z);
+                    // Model space, not the offset-relative space the vertices use.
+                    dw.Write(pp.Position.X);
+                    dw.Write(pp.Position.Y);
+                    dw.Write(pp.Position.Z);
                     dw.Write(pp.ParentIndex);
                 }
             }

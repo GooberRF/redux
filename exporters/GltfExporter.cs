@@ -306,52 +306,48 @@ namespace redux.exporters
                 sceneNodeIndices.Add(nodes.Count - 1);
             }
 
-            foreach (var brush in mesh.Brushes)
+            // Prop points belong to the model, not to a submesh or a LOD: RED writes the same array
+            // into every LOD of every submesh and RF only ever reads submesh 0 / LOD 0. Emit the set
+            // once so a six-submesh, three-LOD mesh does not show 18 copies of every prop in Blender.
+            foreach (var prop in CollectModelPropPoints(mesh))
             {
-                if (brush.PropPoints == null || brush.PropPoints.Count == 0)
-                    continue;
+                Vector3 pos = RfToRh(prop.Position);
+                Quaternion q = prop.Orientation.LengthSquared() < 1e-8f
+                    ? Quaternion.Identity
+                    : Quaternion.Normalize(prop.Orientation);
+                Quaternion qRh = RfToRh(q);
 
-                foreach (var prop in brush.PropPoints)
+                var propNode = new Node
                 {
-                    Vector3 pos = RfToRh(prop.Position);
-                    Quaternion q = prop.Orientation.LengthSquared() < 1e-8f
-                        ? Quaternion.Identity
-                        : Quaternion.Normalize(prop.Orientation);
-                    Quaternion qRh = RfToRh(q);
-
-                    var propNode = new Node
+                    name = BuildPropPointNodeName(prop.Name),
+                    translation = new[] { pos.X, pos.Y, pos.Z },
+                    rotation = new[] { qRh.X, qRh.Y, qRh.Z, qRh.W },
+                    scale = new[] { 1f, 1f, 1f },
+                    children = new List<int>(),
+                    extras = new Dictionary<string, object>
                     {
-                        name = BuildPropPointNodeName(prop.Name, brush.UID),
-                        translation = new[] { pos.X, pos.Y, pos.Z },
-                        rotation = new[] { qRh.X, qRh.Y, qRh.Z, qRh.W },
-                        scale = new[] { 1f, 1f, 1f },
-                        children = new List<int>(),
-                        extras = new Dictionary<string, object>
+                        ["rf_type"] = "prop_point",
+                        ["rf_name"] = prop.Name ?? string.Empty,
+                        ["rf_parent_bone"] = prop.ParentIndex,
+                        // Authored RF-space quaternion; stock props are not always unit length.
+                        ["rf_orientation"] = new[]
                         {
-                            ["rf_type"] = "prop_point",
-                            ["rf_name"] = prop.Name ?? string.Empty,
-                            ["rf_parent_bone"] = prop.ParentIndex,
-                            ["rf_brush_uid"] = brush.UID,
-                            // Authored RF-space quaternion; stock props are not always unit length.
-                            ["rf_orientation"] = new[]
-                            {
-                                prop.Orientation.X,
-                                prop.Orientation.Y,
-                                prop.Orientation.Z,
-                                prop.Orientation.W
-                            }
+                            prop.Orientation.X,
+                            prop.Orientation.Y,
+                            prop.Orientation.Z,
+                            prop.Orientation.W
                         }
-                    };
+                    }
+                };
 
-                    nodes.Add(propNode);
-                    int propNodeIdx = nodes.Count - 1;
+                nodes.Add(propNode);
+                int propNodeIdx = nodes.Count - 1;
 
-                    bool attachedToBone = hasBones && prop.ParentIndex >= 0 && prop.ParentIndex < boneNodeIndices.Length;
-                    if (attachedToBone)
-                        nodes[boneNodeIndices[prop.ParentIndex]].children!.Add(propNodeIdx);
-                    else
-                        sceneNodeIndices.Add(propNodeIdx);
-                }
+                bool attachedToBone = hasBones && prop.ParentIndex >= 0 && prop.ParentIndex < boneNodeIndices.Length;
+                if (attachedToBone)
+                    nodes[boneNodeIndices[prop.ParentIndex]].children!.Add(propNodeIdx);
+                else
+                    sceneNodeIndices.Add(propNodeIdx);
             }
 
             foreach (var sphere in mesh.CollisionSpheres)
@@ -933,11 +929,70 @@ namespace redux.exporters
         private static Vector3 RfToRh(Vector3 v) => new(-v.X, v.Y, v.Z);
         private static Quaternion RfToRh(Quaternion q) => Quaternion.Normalize(new Quaternion(-q.X, q.Y, q.Z, q.W));
 
+        // The model's prop set. Every LOD brush normally carries an identical array, so the first
+        // brush that has one defines the set verbatim (duplicates included: fp_aslt_rfl_armA really
+        // does store link-BDBN-root twice) and any prop another brush adds is appended.
+        private static List<PropPoint> CollectModelPropPoints(Mesh mesh)
+        {
+            var result = new List<PropPoint>();
+            bool haveBase = false;
+
+            foreach (Brush brush in mesh.Brushes)
+            {
+                if (brush.PropPoints == null || brush.PropPoints.Count == 0)
+                    continue;
+
+                foreach (PropPoint prop in brush.PropPoints)
+                {
+                    // The first brush that has props defines the set verbatim, so a genuine repeat
+                    // inside one LOD survives. Later brushes only contribute props the set does not
+                    // already hold, matched with a tolerance: writing a mesh through a per-submesh
+                    // pivot can leave each submesh's copy of a prop an ULP or two apart.
+                    if (haveBase && result.Any(p => IsSamePropPoint(p, prop)))
+                        continue;
+                    result.Add(prop);
+                }
+
+                haveBase = true;
+            }
+
+            return result;
+        }
+
+        // Two copies of the same model-level prop: same name and parent bone, same position, and the
+        // same orientation up to quaternion sign (q and -q are the same rotation).
+        private static bool IsSamePropPoint(PropPoint a, PropPoint b)
+        {
+            const float tolerance = 1e-4f;
+
+            if (!string.Equals(a.Name ?? string.Empty, b.Name ?? string.Empty, StringComparison.Ordinal))
+                return false;
+            if (a.ParentIndex != b.ParentIndex)
+                return false;
+
+            if (MathF.Abs(a.Position.X - b.Position.X) > tolerance ||
+                MathF.Abs(a.Position.Y - b.Position.Y) > tolerance ||
+                MathF.Abs(a.Position.Z - b.Position.Z) > tolerance)
+                return false;
+
+            Quaternion qa = a.Orientation;
+            Quaternion qb = b.Orientation;
+            bool matches = MathF.Abs(qa.X - qb.X) <= tolerance
+                && MathF.Abs(qa.Y - qb.Y) <= tolerance
+                && MathF.Abs(qa.Z - qb.Z) <= tolerance
+                && MathF.Abs(qa.W - qb.W) <= tolerance;
+            bool matchesNegated = MathF.Abs(qa.X + qb.X) <= tolerance
+                && MathF.Abs(qa.Y + qb.Y) <= tolerance
+                && MathF.Abs(qa.Z + qb.Z) <= tolerance
+                && MathF.Abs(qa.W + qb.W) <= tolerance;
+            return matches || matchesNegated;
+        }
+
         private static string BuildCollisionSphereNodeName(string? name)
             => "rf_csphere::" + (string.IsNullOrWhiteSpace(name) ? "unnamed" : name);
 
-        private static string BuildPropPointNodeName(string? name, int brushUid)
-            => $"rf_prop::uid{brushUid}::" + (string.IsNullOrWhiteSpace(name) ? "unnamed" : name);
+        private static string BuildPropPointNodeName(string? name)
+            => "rf_prop::" + (string.IsNullOrWhiteSpace(name) ? "unnamed" : name);
 
         private static Animation? BuildAnimation(
             RfaFile source,

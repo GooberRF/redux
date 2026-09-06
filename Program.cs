@@ -8,7 +8,7 @@ namespace redux
 {
     class Program
     {
-        private const string Version = "0.2.9";
+        private const string Version = "0.3.0";
         private const string logSrc = "REDUX";
         static void Main(string[] args)
         {
@@ -509,7 +509,18 @@ namespace redux
 
                 case ".gltf":
                     {
-                        var imported = GltfParser.ReadGltf(inputFile);
+                        GltfImportResult imported;
+                        try
+                        {
+                            imported = GltfParser.ReadGltf(inputFile);
+                        }
+                        catch (GltfContentException)
+                        {
+                            // The parser already logged what is wrong; fail quietly with a non-zero code.
+                            Environment.ExitCode = 1;
+                            return;
+                        }
+
                         if (desiredExt == ".v3m")
                         {
                             V3mExporter.ExportV3m(imported.Mesh, outputFile);

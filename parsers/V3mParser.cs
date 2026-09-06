@@ -200,13 +200,15 @@ namespace redux.parsers
                 brush.Indices = new List<int>();
                 brush.PropPoints = new List<redux.utilities.PropPoint>();
 
-                // Copy prop points (apply submesh offset — they share local space with vertices)
+                // Prop points are stored in MODEL space, like collision spheres: RF's static-mesh prop
+                // transform copies the position straight from the file without adding the submesh
+                // offset. Only vertices and triangle planes are offset-relative.
                 foreach (var pp in lod.PropPoints)
                 {
                     brush.PropPoints.Add(new redux.utilities.PropPoint
                     {
                         Name = pp.Name,
-                        Position = pp.Position + offset,
+                        Position = pp.Position,
                         Orientation = pp.Orientation,
                         ParentIndex = pp.ParentIndex
                     });
