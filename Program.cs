@@ -3,6 +3,7 @@ using redux.parsers;
 using redux.utilities;
 using System;
 using System.IO;
+using System.Text.Json;
 
 namespace redux
 {
@@ -270,6 +271,9 @@ namespace redux
                 case "rfa":
                     desiredExt = ".rfa";
                     break;
+                case "vfx":
+                    desiredExt = ".vfx";
+                    break;
                 case "tga":
                     Config.ExportImageFormat = Config.ImageFormat.tga;
                     extractTextures = true;
@@ -280,7 +284,7 @@ namespace redux
                     desiredExt = outFormatArg == "png" ? ".png" : ".tga";
                     break;
                 default:
-                    Logger.Error(logSrc, $"Unknown outformat “{outFormatArg}”. Valid: peg, rfg, v3m, v3c, obj, gltf, rfa, tga, png.");
+                    Logger.Error(logSrc, $"Unknown outformat “{outFormatArg}”. Valid: peg, rfg, v3m, v3c, obj, gltf, rfa, vfx, tga, png.");
                     return;
             }
 
@@ -507,12 +511,74 @@ namespace redux
                     }
                     break;
 
+                case ".vfx":
+                    if (desiredExt is not (".gltf" or ".vfx"))
+                    {
+                        Logger.Error(logSrc, $".vfx → {desiredExt} is not a valid conversion.");
+                        break;
+                    }
+
+                    try
+                    {
+                        // Parse-and-write round trip; used to verify the writer reproduces stock
+                        // files. Like the other same-format paths it writes over its own input.
+                        if (desiredExt == ".vfx" &&
+                            string.Equals(Path.GetFullPath(inputFile), Path.GetFullPath(outputFile), StringComparison.OrdinalIgnoreCase))
+                            Logger.Warn(logSrc, $"Rewriting \"{inputFile}\" in place; keep a copy if the original matters.");
+
+                        var vfx = VfxParser.ReadVfx(inputFile);
+                        if (desiredExt == ".gltf")
+                            VfxGltfExporter.ExportGltf(vfx, outputFile);
+                        else
+                            VfxExporter.ExportVfx(vfx, outputFile);
+                    }
+                    catch (InvalidDataException ex)
+                    {
+                        Logger.Error(logSrc, ex.Message);
+                        Environment.ExitCode = 1;
+                    }
+                    break;
+
                 case ".gltf":
                     {
+                        bool gltfIsVfx = VfxGltfParser.IsVfxGltf(inputFile);
+                        if (desiredExt == ".vfx")
+                        {
+                            if (!gltfIsVfx)
+                            {
+                                Logger.Error(logSrc, "This glTF does not carry VFX data (no node with rf_type \"vfx\"); cannot export .vfx.");
+                                Environment.ExitCode = 1;
+                                return;
+                            }
+
+                            try
+                            {
+                                VfxFile vfxFromGltf = VfxGltfParser.ReadVfxGltf(inputFile);
+                                VfxExporter.ExportVfx(vfxFromGltf, outputFile);
+                            }
+                            catch (Exception ex) when (ex is InvalidDataException or JsonException or FormatException)
+                            {
+                                Logger.Error(logSrc, $"Could not rebuild a .vfx from \"{inputFile}\": {ex.Message}");
+                                Environment.ExitCode = 1;
+                            }
+                            break;
+                        }
+
+                        if (gltfIsVfx)
+                        {
+                            Logger.Error(logSrc, $"This glTF carries VFX data; convert it with -outformat vfx rather than {outFormatArg}.");
+                            Environment.ExitCode = 1;
+                            return;
+                        }
+
+                        // Only the geometry outputs need triangles; .rfa is satisfied by an
+                        // armature and its animation tracks alone.
+                        bool geometryRequired = desiredExt is ".v3m" or ".v3c" or ".rfg" or ".obj" or ".gltf";
+
                         GltfImportResult imported;
                         try
                         {
-                            imported = GltfParser.ReadGltf(inputFile);
+                            imported = GltfParser.ReadGltf(inputFile, geometryRequired);
                         }
                         catch (GltfContentException)
                         {
@@ -623,6 +689,7 @@ namespace redux
             Console.WriteLine("  .gltf   (glTF 2.0)");
             Console.WriteLine("  .peg    (RF2 texture packfile)");
             Console.WriteLine("  .rfa    (RF animation)");
+            Console.WriteLine("  .vfx    (RF animated effect mesh)");
             Console.WriteLine();
             Console.WriteLine("Supported output formats (specify with -outformat):");
             Console.WriteLine("  rfg     (RF group)");
@@ -631,12 +698,15 @@ namespace redux
             Console.WriteLine("  obj     (Wavefront OBJ)");
             Console.WriteLine("  gltf    (glTF 2.0)");
             Console.WriteLine("  rfa     (RF animation)");
+            Console.WriteLine("  vfx     (RF animated effect mesh)");
             Console.WriteLine("  tga     (extract textures from a .peg into .tga)");
             Console.WriteLine("  png     (extract textures from a .peg into .png)");
             Console.WriteLine();
             Console.WriteLine("Example:");
             Console.WriteLine("  redux.exe -input dm02.rfl -outformat obj");
             Console.WriteLine("  redux.exe -input dmc11.peg -outformat png");
+            Console.WriteLine("  redux.exe -input CTFflag-red.vfx -outformat gltf");
+            Console.WriteLine("  redux.exe -input CTFflag-red.gltf -outformat vfx");
             Console.WriteLine();
             Console.WriteLine("Other options (boolean flags):");
             Console.WriteLine("  -loglevel <debug|dev|info|warn|error> - Set logging verbosity level (default info)");
@@ -668,6 +738,7 @@ namespace redux
             Console.WriteLine("Notes:");
             Console.WriteLine("  – <bool> defaults to true if no explicit value is given.");
             Console.WriteLine("  - <class> references class names from in the corresponding .tbl file. Use quotation marks if it has spaces.");
+            Console.WriteLine("  - .vfx output is always written as version 0x40006; .gltf carries the authored VFX data in node/material extras.");
             Console.WriteLine("  – If you supply “-input dmc11.peg -outformat png,” textures will be extracted as .png files in a folder named “dmc11/”.");
         }
     }

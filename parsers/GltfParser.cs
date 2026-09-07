@@ -25,7 +25,12 @@ namespace redux.parsers
     {
         private const string logSrc = "GltfParser";
 
-        public static GltfImportResult ReadGltf(string path)
+        public static GltfImportResult ReadGltf(string path) => ReadGltf(path, geometryRequired: true);
+
+        // geometryRequired says whether the caller needs triangles. Outputs that are pure geometry
+        // (v3m, v3c, rfg, obj) do, and get a clear error when the glTF has none. An .rfa only needs
+        // the armature and its animation tracks, so an armature-only export has to pass through.
+        public static GltfImportResult ReadGltf(string path, bool geometryRequired)
         {
             string json = File.ReadAllText(path);
             var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
@@ -48,7 +53,7 @@ namespace redux.parsers
 
             // A glTF exported with Blender's "Limit to Selected Objects" while only an empty (a prop
             // point or collision sphere helper) was selected has nodes but no geometry at all.
-            if (root.meshes.Count == 0 || root.buffers.Count == 0)
+            if (geometryRequired && root.meshes.Count == 0)
             {
                 Logger.Error(
                     logSrc,
@@ -57,14 +62,27 @@ namespace redux.parsers
                 throw new GltfContentException("glTF contains no mesh data.");
             }
 
+            // Every accessor reads out of the buffer, so a glTF without one is unusable whatever
+            // the caller wants out of it.
+            if (root.buffers.Count == 0)
+            {
+                Logger.Error(logSrc, $"glTF \"{path}\" declares no buffer; a .gltf needs its .bin companion alongside it.");
+                throw new GltfContentException("glTF declares no buffer.");
+            }
+
             string baseDir = Path.GetDirectoryName(path) ?? string.Empty;
             byte[] buffer = LoadBuffer(root.buffers[0].uri, baseDir);
 
             Dictionary<int, int> parentByNode = BuildParentMap(root.nodes);
             Matrix4x4[] nodeWorldMatrices = BuildWorldMatrices(root.nodes, parentByNode);
             List<int> meshNodeIndices = GetMeshNodeIndices(root.nodes);
-            if (meshNodeIndices.Count == 0)
-                throw new InvalidDataException("No mesh node found in glTF.");
+            if (geometryRequired && meshNodeIndices.Count == 0)
+            {
+                Logger.Error(
+                    logSrc,
+                    $"glTF has {root.meshes.Count} mesh(es) but no node references any of them, so there is nothing to place in the model.");
+                throw new GltfContentException("No mesh node found in glTF.");
+            }
 
             var mesh = new Mesh();
             int[] jointNodes = Array.Empty<int>();
@@ -590,6 +608,11 @@ namespace redux.parsers
                 if (skin.HasValue && skin.Value >= 0 && skin.Value < root.skins.Count)
                     return skin.Value;
             }
+
+            // An armature-only glTF has no mesh to hang the skin off, but its joints and animation
+            // tracks are exactly what an .rfa export needs, so take the first skin it declares.
+            if (meshNodeIndices.Count == 0)
+                return 0;
 
             return null;
         }

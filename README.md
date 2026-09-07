@@ -12,6 +12,7 @@ Examples:
 - redux.exe -input mymesh.rfg -outformat v3m
 - redux.exe -input dmpc03.rfl -outformat rfg -brushes -textranslate
 - redux.exe -input dm02.rfl -outformat rfg -geomirror X -ngons -brushes
+- redux.exe -input CTFflag-red.vfx -outformat gltf
 
 Supported input formats:
 ------  
@@ -23,6 +24,7 @@ Supported input formats:
 - `RF Static Mesh (.rfm)`              Mesh with submeshes, LODs, prop points, and cspheres (partial support)
 - `RF Character Mesh (.rfm)`           Mesh with submeshes, LODs, prop points, and cspheres (partial support)
 - `RF Animation (.rfa)`                Animation data (partial support)
+- `RF Effect Mesh (.vfx)`              Animated effect mesh: meshes, morph/keyframe animation, materials, particles, dummies, warps, lights
 - `RF2 Texture Packfile (.peg)`        Textures
 
 Supported output formats:
@@ -32,6 +34,7 @@ Supported output formats:
 - `RF Character Mesh (.v3c)`           Character mesh with bones, vertex weights, and collision spheres
 - `glTF 2.0 (.gltf)`                   Blender-friendly mesh/skeleton export with collision spheres and optional RFA animation
 - `RF Animation (.rfa)`                Animation export/import (from RFA and glTF animation tracks)
+- `RF Effect Mesh (.vfx)`              Version 0x40006 effect mesh (from a VFX glTF)
 - `Wavefront OBJ (.obj)`               Geometry objects with flags in object names (from RFL, RFG, V3M, OBJ)
 - `Portable Network Graphics (.png)`   Image (extract from PEG)
 - `TARGA (.tga)`                       Image (extract from PEG)
