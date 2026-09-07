@@ -3,13 +3,14 @@ using redux.parsers;
 using redux.utilities;
 using System;
 using System.IO;
+using System.Reflection;
 using System.Text.Json;
 
 namespace redux
 {
     class Program
     {
-        private const string Version = "0.3.0";
+        private static readonly string Version = GetVersion();
         private const string logSrc = "REDUX";
         static void Main(string[] args)
         {
@@ -668,6 +669,29 @@ namespace redux
             return true;
         }
 
+        /// <summary>
+        /// Reads the product version from assembly metadata (populated by the Version property in redux.csproj),
+        /// trimmed to three parts so the banner matches the version used for release packaging.
+        /// </summary>
+        private static string GetVersion()
+        {
+            Assembly asm = Assembly.GetExecutingAssembly();
+            string? raw = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+            if (string.IsNullOrWhiteSpace(raw))
+                raw = asm.GetName().Version?.ToString();
+            if (string.IsNullOrWhiteSpace(raw))
+                return "0.0.0";
+
+            // Strip any SemVer build metadata (e.g. "0.3.0+abc1234").
+            int plus = raw.IndexOf('+');
+            if (plus >= 0)
+                raw = raw.Substring(0, plus);
+
+            string[] parts = raw.Split('.');
+            if (parts.Length >= 3)
+                return string.Join(".", parts[0], parts[1], parts[2]);
+            return raw;
+        }
         private static void ShowHelp()
         {
             Console.WriteLine();

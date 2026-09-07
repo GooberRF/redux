@@ -76,6 +76,21 @@ Notes:
 - This tool may have (read: probably has) bugs. It also has features that are only partially supported for the time being, with intent to improve over time.
 - I always welcome PRs if you'd like to contribute, and also always welcome feedback and bug reports via GitHub/Discord.
 
+Building a release:
+------
+Prerequisites: the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0).
+
+From the repo root, run:
+
+- `.\publish.ps1`  (or `publish.cmd` if PowerShell script execution is restricted)
+
+This produces `dist\` containing:
+
+- `redux.exe`                          Self-contained, single-file win-x64 build
+- `README.md`                          This file
+- `LICENSE`                            License file
+- `redux-<version>-win-x64.zip`        Zip of the three files above, for distribution
+
 Credit:  
 ------
 - REDUX is developed by Chris "Goober" Parsons
