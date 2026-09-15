@@ -1189,6 +1189,10 @@ namespace redux.parsers
 
             if (digitsEnd == digitsStart)
                 return false;
+            // The LOD digits must run to the end of the name; Blender's ".001" duplicate suffixes
+            // mark distinct objects, not LOD members.
+            if (digitsEnd != value.Length)
+                return false;
 
             return int.TryParse(value[digitsStart..digitsEnd], out lodIndex);
         }

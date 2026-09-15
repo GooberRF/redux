@@ -683,6 +683,10 @@ namespace redux.exporters
 
             if (idxEnd == idxStart)
                 return null;
+            // The LOD digits must run to the end of the name; Blender's ".001" duplicate suffixes
+            // mark distinct objects, not LOD members.
+            if (idxEnd != name.Length)
+                return null;
 
             return int.TryParse(name[idxStart..idxEnd], out int lod) ? lod : null;
         }

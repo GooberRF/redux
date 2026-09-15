@@ -787,6 +787,31 @@ namespace redux.exporters
             return props;
         }
 
+        private static readonly string[] KnownNameExtensions =
+        {
+            ".tga", ".atx", ".vbm", ".png", ".jpg", ".jpeg", ".bmp", ".dds", ".v3m", ".v3c", ".vfx", ".rfm", ".gltf", ".glb"
+        };
+
+        // Path.GetFileNameWithoutExtension() would strip Blender's ".001" duplicate suffixes, so only
+        // drop a trailing extension when it is one we actually recognize.
+        private static string StripKnownExtension(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return value;
+
+            string ext = Path.GetExtension(value);
+            if (string.IsNullOrEmpty(ext))
+                return value;
+
+            foreach (string known in KnownNameExtensions)
+            {
+                if (ext.Equals(known, StringComparison.OrdinalIgnoreCase))
+                    return value[..^ext.Length];
+            }
+
+            return value;
+        }
+
         private static bool TryExtractLodBrushInfo(string? name, out string baseName, out int lodIndex)
         {
             baseName = string.Empty;
@@ -795,7 +820,7 @@ namespace redux.exporters
             if (string.IsNullOrWhiteSpace(name))
                 return false;
 
-            string value = Path.GetFileNameWithoutExtension(name.Trim());
+            string value = StripKnownExtension(name.Trim());
             if (string.IsNullOrWhiteSpace(value))
                 return false;
 
@@ -813,6 +838,10 @@ namespace redux.exporters
 
             if (digitsEnd == digitsStart)
                 return false;
+            // The LOD digits must run to the end of the name. Blender appends ".001", ".002", ...
+            // to duplicated objects, so "Foo_LOD0.001" is a distinct debris piece, not LOD 0 of "Foo".
+            if (digitsEnd != value.Length)
+                return false;
             if (!int.TryParse(value[digitsStart..digitsEnd], out lodIndex))
                 return false;
 
@@ -826,7 +855,7 @@ namespace redux.exporters
         {
             string value = string.IsNullOrWhiteSpace(name)
                 ? $"Brush_{uid}"
-                : Path.GetFileNameWithoutExtension(name.Trim());
+                : StripKnownExtension(name.Trim());
             if (string.IsNullOrWhiteSpace(value))
                 value = $"Brush_{uid}";
             return value;
